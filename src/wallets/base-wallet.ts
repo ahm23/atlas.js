@@ -9,6 +9,7 @@ import {
 import { SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { OfflineSigner } from '@cosmjs/proto-signing';
 import { GasPrice } from '@cosmjs/stargate';
+import { getSigningNebulixClient } from '@atlas/atlas.js-protos'
 
 export abstract class BaseWallet {
   protected chainId: string;
@@ -135,18 +136,13 @@ export abstract class BaseWallet {
         ? GasPrice.fromString(this.config.gasPrice)
         : GasPrice.fromString('0.025udepin');
 
-      this.signingClient = await SigningStargateClient.connectWithSigner(
-        this.rpcEndpoint,
-        offlineSigner,
-        {
-          gasPrice,
-        // gasAdjustment: this.config.gasAdjustment || 1.3,
-        // why tf did they remove this?? ^^
-        //
-        // [TODO]: add registry for custom messages
-        }
-      );
-      
+      this.signingClient = await getSigningNebulixClient({
+        rpcEndpoint: this.rpcEndpoint,
+        signer: offlineSigner,
+      });
+
+      console.log(this.signingClient.registry)
+
       this.offlineSigner = offlineSigner;
       
       // Store wallet connection

@@ -1,20 +1,20 @@
 import { IFileMeta } from "@/interfaces/metadata"
 
-export function stringToUint8Array (str: string): Uint8Array {
+export function stringToUint8ArrayBuffer(str: string): ArrayBuffer {
   const uintView = new Uint8Array(str.length)
   for (let i = 0; i < str.length; i++) {
     uintView[i] = str.charCodeAt(i)
   }
-  return uintView
+  return uintView.buffer
 }
 
-export function bufferToHex (buf: Uint8Array): string {
+export function bufferToHex(buf: Uint8Array): string {
   return buf.reduce((acc: string, curr: number) => {
     return acc + hexMap[curr]
   }, '')
 }
 
-export function extractFileMetaData (input: File): IFileMeta {
+export function extractFileMetaData(input: File): IFileMeta {
   const { name, size, type, lastModified = Date.now() } = input
   return { lastModified, name, size, type }
 }

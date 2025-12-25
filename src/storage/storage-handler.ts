@@ -30,7 +30,7 @@ export class StorageHandler {
   ): Promise<QueuedFile> {
     try {
       const fileMeta = extractFileMetaData(file)
-      const stagedId = await hashAndHex(fileMeta.name + Date.now().toString())
+      const queuedId = await hashAndHex(fileMeta.name + Date.now().toString())
       let aes: IAesBundle;
 
       if (options.encrypt) {
@@ -44,13 +44,14 @@ export class StorageHandler {
           )
         }
 
-        file = new File(encryptedArray, stagedId, { type: 'text/plain' })
+        file = new File(encryptedArray, queuedId, { type: 'text/plain' })
       }
 
       // [TODO]: MERKLE IT!
 
       // create staged file object
       const stagedFile: QueuedFile = {
+        id: queuedId,
         file,
         fileMeta,
         merkleRoot: new Uint8Array(),
@@ -59,7 +60,7 @@ export class StorageHandler {
       };
 
       // Store in memory
-      this.queuedFiles.set(stagedId, stagedFile);
+      this.queuedFiles.set(queuedId, stagedFile);
 
       return stagedFile;
     } catch (error) {
@@ -82,13 +83,13 @@ export class StorageHandler {
         throw new Error(`No queued file found with ID: ${queuedId}`);
       }
 
-      const msg = nebulix.storage.v1.MsgPostFile.fromPartial({
-            creator: this.client.getCurrentAddress(),
-            merkle: queuedFile.merkleRoot,
-            fileSize: queuedFile.file.size,
-            replicas: queuedFile.replicas ?? 3,
-            subscription: ""
-          })
+      const msg = nebulix.storage.v1.MessageComposer.encoded.postFile({
+          creator: this.client.getCurrentAddress(),
+          merkle: queuedFile.merkleRoot,
+          fileSize: BigInt(queuedFile.file.size),
+          replicas: BigInt(queuedFile.replicas ?? 3),
+          subscription: ""
+        })
 
       const txHash = await this.client.signAndBroadcast([msg])
 

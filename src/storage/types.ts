@@ -8,6 +8,7 @@ export interface FileOptions {
 }
 
 export interface QueuedFile {
+  id: string,
   file: File,
   fileMeta: IFileMeta
   merkleRoot: Uint8Array, 
