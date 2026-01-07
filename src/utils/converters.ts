@@ -1,4 +1,4 @@
-import { IFileMeta } from "@/interfaces/metadata"
+import { IFileInfo } from "@/interfaces/metadata"
 
 export function stringToUint8ArrayBuffer(str: string): ArrayBuffer {
   const uintView = new Uint8Array(str.length)
@@ -14,7 +14,7 @@ export function bufferToHex(buf: Uint8Array): string {
   }, '')
 }
 
-export function extractFileMetaData(input: File): IFileMeta {
+export function extractFileMetaData(input: File): IFileInfo {
   const { name, size, type, lastModified = Date.now() } = input
   return { lastModified, name, size, type }
 }

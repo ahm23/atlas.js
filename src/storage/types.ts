@@ -1,5 +1,5 @@
 import { IAesBundle } from "@/interfaces/encryption";
-import { IFileMeta } from "@/interfaces/metadata";
+import { IFileInfo } from "@/interfaces/metadata";
 
 export interface FileOptions {
   encrypt?: boolean;
@@ -10,7 +10,7 @@ export interface FileOptions {
 export interface QueuedFile {
   id: string,
   file: File,
-  fileMeta: IFileMeta
+  fileMeta: IFileInfo
   merkleRoot: Uint8Array, 
   aes?: IAesBundle;
   replicas?: number;

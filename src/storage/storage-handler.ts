@@ -15,20 +15,53 @@ import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { toHex } from "@cosmjs/encoding";
 import { StargateClient } from '@cosmjs/stargate';
-import { IFolderContents } from '@/interfaces/types/IFolderContents';
+import { IDirectoryContents } from '@/interfaces/data/IDirectoryContents';
 import { QueryFileTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
-import { IFolderMeta } from '@/interfaces/types/IFolderMeta';
+
+import { IDirectory } from '@/interfaces';
 
 export class StorageHandler implements IStorageHandler {
   private client: AtlasClient;
   private queuedFiles: Map<string, QueuedFile> = new Map();
   private address;
 
-  private directory: IFolderContents;
+  private _directory: IDirectory;
+  get directory(): IDirectory {
+    return this._directory;
+  }
 
   constructor(client: AtlasClient) {
     this.client = client;
     this.address = client.getCurrentAddress();
+  }
+
+  /**
+   * Load directory metadata and children for a given path.
+   * Directory info is accessible via the directory getter.
+   */
+  public async loadDirectory(path: string, owner?: string) {
+    // [PHASE 1]: directory loading assuming not encrypted folder and files
+    // [PHASE 2]: encrypted folder and children compatibility
+    // [PHASE 3]: paginated children request handling
+
+    const dir = (await this.client.query.nebulix.filetree.v1.fileTreeNode({ path, owner: owner || this.address })).node
+    const children = (await this.client.query.nebulix.filetree.v1.fileTreeNodeChildren({ path, owner: owner || this.address })).children
+    
+    let newDir: IDirectory = { metadata: JSON.parse(dir.contents), files: [], subdirs: [], objects: [] };
+    for (const node of children) {
+      switch (node.nodeType) {
+        case "directory":
+          newDir.subdirs.push(JSON.parse(node.contents))
+          break;
+        case "file":
+          newDir.files.push(JSON.parse(node.contents))
+          break;
+        default:
+          newDir.objects.push(node.contents)
+      }
+    }
+
+    this._directory = newDir
   }
 
   /**
@@ -161,48 +194,6 @@ export class StorageHandler implements IStorageHandler {
       };
     } catch (error) {
       throw new Error(`Failed to upload file: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get directory contents for a given path
-   */
-  async getDirectory(path: string, owner?: string) {
-    // const res = await this.client.query.nebulix.filetree.v1.fileTreePaths({ owner: this.address, basepath: "home" })
-    // console.log(res)
-
-    const nodes = (await this.client.query.nebulix.filetree.v1.fileTreeNodes({ path, owner: owner || this.address })).nodes
-    
-    let folders: IFolderMeta[] = []
-    let files = []
-    let objects = []
-
-    for (const node of nodes) {
-      switch (node.nodeType) {
-        case "directory":
-          folders.push(JSON.parse(node.contents))
-          break;
-        case "file":
-          files.push(JSON.parse(node.contents))
-          break;
-        default:
-          objects.push(node.contents)
-      }
-    }
-
-    if (res.nodeType == "directory") {
-      return JSON.parse(res.contents) as IFolderContents
-    } 
-    else {
-      console.error("Not a directory")
-    }
-  }
-
-  async loadDirectory(path: string) {
-    const contents = await this.getDirectory(path, this.address)
-    
-    for (const file of contents.files) {
-
     }
   }
 
