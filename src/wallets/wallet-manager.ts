@@ -11,7 +11,7 @@ import { BaseWallet } from './base-wallet';
 import { KeplrWallet } from './adapters/keplr-adapter';
 // import { LeapWallet } from './adapters/leap-adapter';
 // import { MnemonicWallet } from './adapters/mnemonic-adapter';
-import { SigningStargateClient, StargateClient } from '@cosmjs/stargate';
+import { DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 
 export class WalletManager {
   private wallet: BaseWallet | null = null;
@@ -108,11 +108,14 @@ export class WalletManager {
     }
 
     const txBody = { msgs: messages };
+    console.log("txBody:", txBody)
     const signed = await this.wallet.signTransaction(txBody, options);
-    return await this.wallet.broadcastTransaction(signed.signedTx!.bodyBytes);
+    console.log("Signed Tx:", signed)
+    // return await this.wallet.broadcastTransaction(signed.signedTx!.bodyBytes);
+    return
   }
 
-  async signTransaction(txBody: any, options?: TxOptions): Promise<SigningResult> {
+  async signTransaction(txBody: any, options?: TxOptions): Promise<DeliverTxResponse> {
     if (!this.wallet) {
       throw new Error('No wallet connected');
     }

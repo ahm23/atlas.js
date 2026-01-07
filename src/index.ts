@@ -15,3 +15,10 @@ export type {
   WalletInfo,
   TxOptions
 } from './wallets/types';
+
+
+export type {
+  IAtlasClient,
+  IStorageHandler
+
+} from './interfaces'

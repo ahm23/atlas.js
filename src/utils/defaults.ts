@@ -9,8 +9,8 @@ export const keyAlgo: AesKeyGenParams = {
 export const atlasDevnetChainConfig: IChainConfig = {
   chainId: 'atlas-1',
   chainName: 'Atlas Protocol',
-  rpc: 'localhost:26657',
-  rest: 'localhost:1317',
+  rpc: 'https://proxy.oculux.io',
+  rest: 'https://api.oculux.io',
   bip44: {
     coinType: 118,
   },

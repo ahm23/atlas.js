@@ -6,10 +6,11 @@ import {
   BroadcastResult, 
   TxOptions 
 } from './types';
-import { SigningStargateClient, StargateClient } from '@cosmjs/stargate';
-import { OfflineSigner } from '@cosmjs/proto-signing';
+import { DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmjs/stargate';
+import { OfflineSigner as OfflineAminoSigner, Registry } from '@cosmjs/proto-signing';
 import { GasPrice } from '@cosmjs/stargate';
-import { getSigningNebulixClient } from '@atlas/atlas.js-protos'
+import { nebulix, cosmos } from '@atlas/atlas.js-protos'
+import { toBase64, toHex } from "@cosmjs/encoding";
 
 export abstract class BaseWallet {
   protected chainId: string;
@@ -17,7 +18,7 @@ export abstract class BaseWallet {
   protected config: WalletConfig;
   protected signingClient: SigningStargateClient | null = null;
   protected queryClient: StargateClient | null = null;
-  protected offlineSigner: OfflineSigner | null = null;
+  protected offlineSigner: OfflineAminoSigner | null = null;
   protected walletConnection: WalletConnection | null = null;
 
   constructor(config: WalletConfig) {
@@ -31,7 +32,7 @@ export abstract class BaseWallet {
   abstract signArbitrary(data: string | Uint8Array): Promise<SigningResult>;
   
   // Concrete methods that use persistent client
-  async signTransaction(txBody: any, options?: TxOptions): Promise<SigningResult> {
+  async signTransaction(txBody: any, options?: TxOptions): Promise<DeliverTxResponse> {
     if (!this.walletConnection) {
       throw new Error('Wallet not connected');
     }
@@ -42,22 +43,18 @@ export abstract class BaseWallet {
 
     try {
       const fee = options?.fee || {
-        amount: [{ denom: 'uatl', amount: '5000' }],
-        gas: options?.gas || '200000'
+        amount: [{ denom: 'uatl', amount: '0' }],
+        gas: options?.gas || '0'
       };
-
-      const signedTx = await this.signingClient.sign(
+      console.log("signed tx msgs:", txBody.msgs)
+      const signedTx = await this.signingClient.signAndBroadcast(
         this.walletConnection.address,
         txBody.msgs,
         fee,
         options?.memo || ''
       );
 
-      return {
-        signedTx,
-        txHash: '', // will be set after broadcast
-        signature: new Uint8Array()
-      };
+      return signedTx;
     } catch (error: any) {
       throw new Error(`Transaction signing failed: ${error.message}`);
     }
@@ -124,7 +121,7 @@ export abstract class BaseWallet {
   }
 
   protected async initClients(
-    offlineSigner: OfflineSigner,
+    offlineSigner: OfflineAminoSigner,
     address: string
   ): Promise<void> {
     try {
@@ -136,15 +133,68 @@ export abstract class BaseWallet {
         ? GasPrice.fromString(this.config.gasPrice)
         : GasPrice.fromString('0.025udepin');
 
-      this.signingClient = await getSigningNebulixClient({
-        rpcEndpoint: this.rpcEndpoint,
-        signer: offlineSigner,
-      });
+      // Create registry with the new, correctly-generated types
+      const registry = new Registry();
+      nebulix.storage.v1.load(registry)
 
-      console.log(this.signingClient.registry)
+      // Create client
+      this.signingClient = await SigningStargateClient.connectWithSigner(
+        this.rpcEndpoint,
+        offlineSigner,
+        { 
+          registry,
+          gasPrice: GasPrice.fromString("0.025uatl")
+         }
+      );
+
+      const originalBroadcastTx = this.signingClient.broadcastTx;
+  
+      this.signingClient.broadcastTx = async function(txBytes) {
+        console.log("TxBytes:", txBytes);
+        console.log("Broadcasting transaction bytes:", {
+          length: txBytes.length,
+          hex: toHex(txBytes),
+          base64: toBase64(txBytes)
+        });
+        return originalBroadcastTx.call(this, txBytes);
+      };
+
+      const originalEncode = cosmos.bank.v1beta1.MsgSend.encode;
+      let encodeCallCount = 0;
+      let encodeInput = null;
+      
+      cosmos.bank.v1beta1.MsgSend.encode = function(message, writer) {
+        encodeCallCount++;
+        encodeInput = message;
+        console.log(`Encode called #${encodeCallCount}:`, {
+          constructor: message.constructor.name,
+          // isTelescopeObject: message instanceof cosmos.bank.v1beta1.MsgSend,
+          rawData: message
+        });
+        return originalEncode.call(this, message, writer);
+      };
+
+      console.log(offlineSigner)
+      console.log(this.signingClient)
+
+      const sendAmount = { denom: "uatl", amount: "1000" };
+      try {
+        const resp = await this.signingClient.sendTokens(
+          "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+          "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+          [sendAmount],
+          {
+            amount: [{ denom: 'uatl', amount: '0' }],
+            gas: '0'
+          },
+        )
+      } catch {
+
+      }
+
 
       this.offlineSigner = offlineSigner;
-      
+            await this.compareEncodings()
       // Store wallet connection
       this.walletConnection = {
         address,
@@ -157,6 +207,77 @@ export abstract class BaseWallet {
     } catch (error: any) {
       throw new Error(`Failed to initialize clients: ${error.message}`);
     }
+  }
+
+  async compareEncodings() {
+    // Import browser-compatible encoding utilities
+    
+    
+    // Method 1: Create message via Telescope
+    const cmsg_raw = cosmos.bank.v1beta1.MsgSend.fromPartial({
+      fromAddress: "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+      toAddress: "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+      amount: [{ denom: "uatl", amount: "1000" }]
+    });
+
+    // Encode with Telescope's encoder
+    const telescopeBytes = cosmos.bank.v1beta1.MsgSend.encode(cmsg_raw).finish();
+    console.log("Telescope encoding (hex):", toHex(telescopeBytes));
+
+    // Method 2: Create equivalent message via CosmJS's registry
+    // Get the encoder from your client's registry
+    const registry = this.signingClient.registry;
+    const cosmjsEncoder = registry.lookupType("/cosmos.bank.v1beta1.MsgSend");
+    
+    const cosmjsMsg = {
+      fromAddress: "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+      toAddress: "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+      amount: [{ denom: "uatl", amount: "1000" }]
+    };
+
+    const cosmjsBytes = cosmjsEncoder.encode(cosmjsMsg).finish();
+    console.log("CosmJS encoding (hex):", toHex(cosmjsBytes));
+
+    // Compare byte by byte
+    console.log("\nByte comparison:");
+    const minLength = Math.min(telescopeBytes.length, cosmjsBytes.length);
+    for (let i = 0; i < minLength; i++) {
+      if (telescopeBytes[i] !== cosmjsBytes[i]) {
+        console.log(`Byte ${i}: Telescope=0x${telescopeBytes[i].toString(16)}, CosmJS=0x${cosmjsBytes[i].toString(16)}`);
+        
+        // Decode field info from this byte
+        const tTag = telescopeBytes[i];
+        const tFieldNum = tTag >>> 3;
+        const tWireType = tTag & 0x07;
+        
+        const cTag = cosmjsBytes[i];
+        const cFieldNum = cTag >>> 3;
+        const cWireType = cTag & 0x07;
+        
+        console.log(`  Telescope: field ${tFieldNum}, wire ${tWireType}`);
+        console.log(`  CosmJS: field ${cFieldNum}, wire ${cWireType}`);
+        
+        if (tWireType === 7) {
+          console.log("  🚨 Telescope is using wire type 7 (deprecated group)!");
+        }
+      }
+    }
+    
+    // Additional check: decode Telescope bytes with CosmJS decoder
+    console.log("\n=== Can CosmJS decode Telescope's bytes? ===");
+    try {
+      const decodedByCosmJS = cosmjsEncoder.decode(telescopeBytes);
+      console.log("✅ CosmJS can decode Telescope's bytes");
+      console.log("Decoded:", decodedByCosmJS);
+    } catch (e) {
+      console.log("❌ CosmJS CANNOT decode Telescope's bytes:", e.message);
+    }
+    
+    // Check if the difference is ONLY in field ordering
+    const telescopeSorted = new Uint8Array([...telescopeBytes].sort((a, b) => a - b));
+    const cosmjsSorted = new Uint8Array([...cosmjsBytes].sort((a, b) => a - b));
+    const sameBytes = telescopeSorted.every((val, idx) => val === cosmjsSorted[idx]);
+    console.log("\nSame bytes (ignoring order):", sameBytes);
   }
 
   abstract getWalletType(): WalletType;

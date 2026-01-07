@@ -1,6 +1,10 @@
 import { WalletManager, WalletType, WalletConnection } from '@/wallets';
 import EventEmitter from 'events';
 import { StorageHandler } from './storage/storage-handler';
+import { nebulix } from '@atlas/atlas.js-protos';
+import { QueryClient } from './wallets/types'
+import { IStorageHandler } from './interfaces';
+import { IAtlasClient } from './interfaces/classes/IAtlasClient';
 
 export interface AtlasConfig {
   chainId: string;
@@ -10,10 +14,12 @@ export interface AtlasConfig {
   gasAdjustment?: number;
 }
 
-export class AtlasClient extends EventEmitter {
+export class AtlasClient extends EventEmitter implements IAtlasClient {
   private config: AtlasConfig;
   private walletManager: WalletManager;
   private isInitialized: boolean = false;
+
+  public query: QueryClient
 
   constructor(config: AtlasConfig) {
     super();
@@ -51,7 +57,9 @@ export class AtlasClient extends EventEmitter {
     try {
       // For now, just mark as initialized
       this.isInitialized = true;
-      
+
+      this.query = await nebulix.ClientFactory.createRPCQueryClient({rpcEndpoint: this.config.rpcEndpoint})
+
       this.emit('initialized', {
         client: this,
         timestamp: Date.now()
@@ -80,6 +88,7 @@ export class AtlasClient extends EventEmitter {
       }
       
       this.emit('walletConnected', connection);
+
       return connection;
     } catch (error) {
       this.emit('error', error);
@@ -136,6 +145,7 @@ export class AtlasClient extends EventEmitter {
     }
 
     try {
+      console.log("Messages:", messages)
       const result = await this.walletManager.signAndBroadcast(messages, memo, null);
       return result.transactionHash
     } catch (error) {
@@ -168,7 +178,7 @@ export class AtlasClient extends EventEmitter {
   /**
    * Handler Factories
    */
-  createStorageHandler(): StorageHandler {
+  createStorageHandler(): IStorageHandler {
     return new StorageHandler(this)
   }
 

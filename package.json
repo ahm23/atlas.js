@@ -36,6 +36,7 @@
   "dependencies": {
     "@cosmjs/proto-signing": "^0.29.4",
     "@cosmjs/stargate": "0.29.4",
-    "@cosmology/lcd": "^0.15.0"
+    "@cosmology/lcd": "^0.15.0",
+    "@atlas/atlas.js-protos": "file:atlas-atlas.js-protos-0.0.1.tgz"
   }
 }

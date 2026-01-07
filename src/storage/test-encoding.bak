@@ -1,0 +1,70 @@
+// test-encoding.ts
+import { toBase64, fromBase64 } from "@cosmjs/encoding";
+// Import your Telescope-generated clients/messages
+import { cosmos, google } from '@atlas/atlas.js-protos';
+
+export async function debugEncoding() {
+  console.log("=== Testing Raw MsgSend Encoding ===");
+  
+  // Step 1: Create and encode the raw MsgSend
+  const msgSend = cosmos.bank.v1beta1.MsgSend.fromPartial({
+    fromAddress: "cosmos1placeholder",
+    toAddress: "cosmos1placeholder",
+    amount: []
+  });
+  
+  const msgSendBytes = cosmos.bank.v1beta1.MsgSend.encode(msgSend).finish();
+  console.log("MsgSend bytes (base64):", uint8ArrayToBase64(msgSendBytes));
+  
+  // Step 2: Create the Any wrapper
+  const anyMsg = google.protobuf.Any.fromPartial({
+    typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+    value: msgSendBytes
+  });
+  
+  const anyBytes = google.protobuf.Any.encode(anyMsg).finish();
+  console.log("\nAny wrapper bytes (base64):", uint8ArrayToBase64(anyBytes));
+  
+  // Step 3: Decode the Any we just created to verify it
+  try {
+    const decodedAny = google.protobuf.Any.decode(anyBytes);
+    console.log("\nSuccessfully decoded Any back:");
+    console.log("  typeUrl:", decodedAny.typeUrl);
+    console.log("  value length:", decodedAny.value.length);
+  } catch (e) {
+    console.error("\nFailed to decode our own Any!", e);
+  }
+  
+  // Step 4: Manually parse the binary to find field 5
+  console.log("\n=== Manual Binary Analysis ===");
+  // const hex = Buffer.from(anyBytes).toString('hex');
+  // Parse byte by byte to find field tags
+  for (let i = 0; i < anyBytes.length; i++) {
+    const byte = anyBytes[i];
+    const fieldNum = byte >>> 3; // First 5 bits are field number
+    const wireType = byte & 0x07; // Last 3 bits are wire type
+    
+    console.log(`Byte ${i}: 0x${byte.toString(16).padStart(2, '0')} = field ${fieldNum}, wire ${wireType}`);
+    
+    // If we find wire type 7, we've found the culprit
+    if (wireType === 7) {
+      console.error(`🚨 FOUND WIRE TYPE 7 AT BYTE ${i}!`);
+      // Show surrounding bytes for context
+      const start = Math.max(0, i - 5);
+      const end = Math.min(anyBytes.length, i + 5);
+      console.log("Context bytes:", Array.from(anyBytes.slice(start, end))
+        .map(b => b.toString(16).padStart(2, '0')).join(' '));
+    }
+  }
+}
+
+debugEncoding().catch(console.error);
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}

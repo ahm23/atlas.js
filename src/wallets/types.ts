@@ -1,3 +1,7 @@
+import { Query as BankQuery } from "@atlas/atlas.js-protos/dist/types/cosmos/bank/v1beta1/query.rpc.Query";
+import { Query as FiletreeQuery } from "@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query.rpc.Query";
+import { Query as StorageQuery } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/query.rpc.Query";
+
 import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 
 export interface WalletConfig {
@@ -82,5 +86,21 @@ interface IChainCurrency {
     low: number
     average: number
     high: number
+  }
+}
+
+export interface QueryClient {
+  cosmos: {
+    bank: {
+      v1beta1: BankQuery
+    }
+  },
+  nebulix: {
+    filetree: {
+      v1: FiletreeQuery,
+    },
+    storage: {
+      v1: StorageQuery,
+    }
   }
 }
