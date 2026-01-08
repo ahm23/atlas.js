@@ -19,6 +19,8 @@ import { StargateClient } from '@cosmjs/stargate';
 import { QueryFileTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
 
 import { IDirectory, IFileMeta } from '@/interfaces';
+import MerkleTree from 'merkletreejs';
+import { buildMerkleTreeFromBlob } from '@/utils/merkletree';
 
 export class StorageHandler implements IStorageHandler {
   private client: AtlasClient;
@@ -79,12 +81,12 @@ export class StorageHandler implements IStorageHandler {
         file = await this.encryptFile(file, options.encryption)
       }
 
-      // [TODO]: MERKLE IT!
+      const tree = await buildMerkleTreeFromBlob(file);
 
       // create staged file object
       const stagedFile: QueuedFile = {
         file,
-        merkleRoot: new Uint8Array(),
+        merkleRoot: tree.getRoot(),
         aes: options.encryption?.aes,
         timestamp: Date.now(),
       };
