@@ -1,10 +1,10 @@
-import { FileOptions, QueuedFile, UploadOptions, UploadResult } from "@/storage/types";
+import { FileUploadOptions, QueuedFile, UploadOptions, UploadResult } from "@/storage/types";
 
 
 export interface IStorageHandler {
 
-  queueFile(file: File, options: FileOptions): Promise<QueuedFile>
+  queueFile(file: File, options: FileUploadOptions): Promise<QueuedFile>
   
   // upload queued files
-  upload(): Promise<void>
+  // upload(): Promise<void>
 }

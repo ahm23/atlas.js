@@ -23,7 +23,7 @@
     "noEmit": true,
 
     /* Linting */
-    "strict": false,
+    "strict": true,
 
     "baseUrl": ".",
     "paths": {

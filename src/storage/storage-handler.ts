@@ -1,6 +1,7 @@
 import { defaultEncryptionChunkSize } from '@/utils/defaults';
 import { 
-  FileOptions, 
+  EncryptionOptions,
+  FileUploadOptions, 
   QueuedFile, 
   UploadOptions, 
   UploadResult,
@@ -15,17 +16,16 @@ import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { toHex } from "@cosmjs/encoding";
 import { StargateClient } from '@cosmjs/stargate';
-import { IDirectoryContents } from '@/interfaces/data/IDirectoryContents';
 import { QueryFileTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
 
-import { IDirectory } from '@/interfaces';
+import { IDirectory, IFileMeta } from '@/interfaces';
 
 export class StorageHandler implements IStorageHandler {
   private client: AtlasClient;
   private queuedFiles: Map<string, QueuedFile> = new Map();
   private address;
 
-  private _directory: IDirectory;
+  private _directory = {} as IDirectory;
   get directory(): IDirectory {
     return this._directory;
   }
@@ -68,53 +68,54 @@ export class StorageHandler implements IStorageHandler {
    * Stage a file for upload
    * Prepares the file by hashing, optional encryption, and chunking
    */
-  async queueFile(
+  public async queueFile(
     file: File,
-    options: FileOptions = {}
+    options: FileUploadOptions
   ): Promise<QueuedFile> {
     try {
-      const fileMeta = extractFileMetaData(file)
-      const queuedId = await hashAndHex(fileMeta.name + Date.now().toString())
-      let aes: IAesBundle;
+      if (options.encryption) {
+        options.encryption.aes = options.encryption.aes ?? await generateAesKey();
 
-      if (options.encrypt) {
-        aes = await generateAesKey();
-        const encryptedArray: Blob[] = []
-        for (let i = 0; i < file.size; i += options.chunkSize ?? defaultEncryptionChunkSize) {
-          const blobChunk = file.slice(i, i + (options.chunkSize ?? defaultEncryptionChunkSize))
-          encryptedArray.push(
-            new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
-            await aesBlobCrypt(blobChunk, aes, 'encrypt'),
-          )
-        }
-
-        file = new File(encryptedArray, queuedId, { type: 'text/plain' })
+        file = await this.encryptFile(file, options.encryption)
       }
 
       // [TODO]: MERKLE IT!
 
       // create staged file object
       const stagedFile: QueuedFile = {
-        id: queuedId,
         file,
-        fileMeta,
         merkleRoot: new Uint8Array(),
-        aes,
+        aes: options.encryption?.aes,
         timestamp: Date.now(),
       };
 
       // Store in memory
-      this.queuedFiles.set(queuedId, stagedFile);
+      this.queuedFiles.set(file.name, stagedFile);
 
       return stagedFile;
-    } catch (error) {
-      throw new Error(`Failed to stage file: ${error.message}`);
+    } catch (err) {
+      // [TODO]: proper error handling
+      // this is useless.. for now
+      throw err;
     }
   }
 
-  async upload() {
-    
+
+  private async encryptFile(file: File, opts: EncryptionOptions): Promise<File> {
+    if (!opts.aes) throw new Error("AES key & iv are required in the encryption options!")
+
+    const encryptedBytes: Blob[] = []
+    for (let i = 0; i < file.size; i += opts.chunkSize ?? defaultEncryptionChunkSize) {
+      const blobChunk = file.slice(i, i + (opts.chunkSize ?? defaultEncryptionChunkSize))
+      encryptedBytes.push(
+        new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
+        await aesBlobCrypt(blobChunk, opts.aes, 'encrypt'),
+      )
+    }
+
+    return new File(encryptedBytes, file.name, { type: file.type, lastModified: file.lastModified })
   }
+
 
   /**
    * Upload a staged file to the blockchain
@@ -193,7 +194,7 @@ export class StorageHandler implements IStorageHandler {
         timestamp: Date.now()
       };
     } catch (error) {
-      throw new Error(`Failed to upload file: ${error.message}`);
+      throw new Error(`Failed to upload file: ${error}`);
     }
   }
 

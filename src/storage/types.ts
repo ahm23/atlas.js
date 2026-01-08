@@ -1,16 +1,18 @@
 import { IAesBundle } from "@/interfaces/encryption";
-import { IFileInfo } from "@/interfaces/metadata";
+import { IFileMeta } from "@/interfaces/metadata";
 
-export interface FileOptions {
-  encrypt?: boolean;
-  chunkSize?: number;
+export interface FileUploadOptions {
+  encryption?: EncryptionOptions
   metadata?: Record<string, any>;
 }
 
+export interface EncryptionOptions {
+  chunkSize: number;
+  aes?: IAesBundle;
+}
+
 export interface QueuedFile {
-  id: string,
   file: File,
-  fileMeta: IFileInfo
   merkleRoot: Uint8Array, 
   aes?: IAesBundle;
   replicas?: number;
