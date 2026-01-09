@@ -21,6 +21,7 @@ import { QueryFileTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/neb
 import { IDirectory, IFileMeta } from '@/interfaces';
 import MerkleTree from 'merkletreejs';
 import { buildMerkleTreeFromBlob } from '@/utils/merkletree';
+import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
 
 export class StorageHandler implements IStorageHandler {
   private client: AtlasClient;
@@ -32,9 +33,23 @@ export class StorageHandler implements IStorageHandler {
     return this._directory;
   }
 
+  private _providers: Provider[] = [];
+  get providers(): Provider[] {
+    return this._providers;
+  }
+
   constructor(client: AtlasClient) {
     this.client = client;
     this.address = client.getCurrentAddress();
+  }
+
+  static async NewStorageHandler(client: AtlasClient, homeDir: string = 'home'): Promise<StorageHandler> {
+    const sh = new StorageHandler(client)
+
+    await sh.loadProviders()
+    await sh.loadDirectory(homeDir)
+
+    return sh
   }
 
   /**
@@ -47,7 +62,11 @@ export class StorageHandler implements IStorageHandler {
     // [PHASE 3]: paginated children request handling
 
     const dir = (await this.client.query.nebulix.filetree.v1.fileTreeNode({ path, owner: owner || this.address })).node
-    const children = (await this.client.query.nebulix.filetree.v1.fileTreeNodeChildren({ path, owner: owner || this.address })).children
+    if (!dir) {
+      // [TODO]: error handling
+      throw new Error(`failed to get node ${path}, ${owner}`)
+    }
+    const children = (await this.client.query.nebulix.filetree.v1.fileTreeNodeChildren({ path, owner: owner || this.address })).children ?? []
     
     let newDir: IDirectory = { metadata: JSON.parse(dir.contents), files: [], subdirs: [], objects: [] };
     for (const node of children) {
@@ -64,6 +83,19 @@ export class StorageHandler implements IStorageHandler {
     }
 
     this._directory = newDir
+  }
+
+  /**
+   * Load active provider set.
+   */
+  public async loadProviders() {
+    try {
+      this._providers = (await this.client.query.nebulix.storage.v1.providers()).providers
+    } catch (err) {
+      // [TODO]: proper error handling
+      // this is useless.. for now
+      throw err;
+    }
   }
 
   /**
