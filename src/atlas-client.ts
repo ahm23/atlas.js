@@ -146,7 +146,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
     try {
       console.log("Messages:", messages)
-      const result = await this.walletManager.signAndBroadcast(messages, memo, null);
+      const result = await this.walletManager.signAndBroadcast(messages, memo, undefined);
       return result.transactionHash
     } catch (error) {
       this.emit('error', error);
@@ -178,7 +178,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   /**
    * Handler Factories
    */
-  createStorageHandler(): IStorageHandler {
+  createStorageHandler(): StorageHandler {
     return new StorageHandler(this)
   }
 

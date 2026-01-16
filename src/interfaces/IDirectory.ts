@@ -1,11 +1,12 @@
-import { IFileInfo } from "./types/IFileInfo";
+import { IAtlasFileInfo } from "./types/IFileInfo";
 import { IDirectoryInfo } from "./types/IDirectoryInfo";
 
 
-export interface IDirectory {
-  metadata: IDirectoryInfo
-  
-  files: IFileInfo[]
+export interface IDirectory {  
+  path: string
+  files: IAtlasFileInfo[]
   subdirs: IDirectoryInfo[]
   objects: string[]
+
+  metadata: any
 }

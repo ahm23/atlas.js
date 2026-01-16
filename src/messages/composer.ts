@@ -1,0 +1,63 @@
+// src/messages/composer.ts
+import { EncodeObject } from '@cosmjs/proto-signing';
+import { nebulix } from '@atlas/atlas.js-protos';
+
+export class MessageComposer {
+  /**
+   * Creates a properly formatted EncodeObject for file upload
+   */
+  static createFileUploadMsg(
+    creator: string,
+    merkleRoot: Uint8Array,
+    fileSize: bigint,
+    replicas: bigint = 3n,
+    subscription: string = ""
+  ): EncodeObject {
+    // Use the MessageComposer from your protos
+    return nebulix.storage.v1.MessageComposer.withTypeUrl.postFile({
+      creator,
+      merkle: merkleRoot,
+      fileSize,
+      replicas,
+      subscription
+    });
+  }
+
+  /**
+   * Creates a file tree node message
+   */
+  static createFileTreeNodeMsg(
+    creator: string,
+    path: string,
+    nodeType: 'file' | 'directory',
+    contents: string
+  ): EncodeObject {
+    return nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+      creator,
+      path,
+      nodeType,
+      contents
+    });
+  }
+
+  /**
+   * Creates a cosmos bank send message
+   */
+  static createBankSendMsg(
+    fromAddress: string,
+    toAddress: string,
+    amount: string, // e.g., "1000uatl"
+    denom: string = "uatl"
+  ): EncodeObject {
+    const cosmos = require('cosmjs-types/cosmos/bank/v1beta1/tx');
+    
+    return {
+      typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+      value: cosmos.MsgSend.fromPartial({
+        fromAddress,
+        toAddress,
+        amount: [{ denom, amount }]
+      })
+    };
+  }
+}

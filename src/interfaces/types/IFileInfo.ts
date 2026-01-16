@@ -1,9 +1,10 @@
-export interface IFileInfo {
+export interface IAtlasFileInfo {
   name: string
   size: number
   type: string
-
   lastModified: number
-  lastUpdated: number
-  created: number
+
+  merkleRoot: Uint8Array
+  dateUpdated: number
+  dateCreated: number
 }

@@ -7,7 +7,7 @@ import {
   UploadResult,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
-import { extractFileMetaData } from '@/utils/converters';
+import { bytesToHex, extractFileMetaData } from '@/utils/converters';
 import { hashAndHex } from '@/utils/hash';
 import { IAesBundle } from '@/interfaces/encryption';
 import { aesBlobCrypt, generateAesKey } from '@/utils/crypto';
@@ -16,40 +16,49 @@ import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { toHex } from "@cosmjs/encoding";
 import { StargateClient } from '@cosmjs/stargate';
-import { QueryFileTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
+import { QueryFileNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
 
 import { IDirectory, IFileMeta } from '@/interfaces';
 import MerkleTree from 'merkletreejs';
-import { buildMerkleTreeFromBlob } from '@/utils/merkletree';
+import { buildFileMerkleTree } from '@/utils/merkletree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
+import EventEmitter from 'events';
 
-export class StorageHandler implements IStorageHandler {
+export enum FileProcessingEvent {
+  ENCRYPTED = 'file:encrypted',
+  MERKLE_BUILT = 'file:merkle-built',
+  READY = 'file:ready',
+  ERROR = 'file:error'
+}
+
+export class StorageHandler extends EventEmitter implements IStorageHandler {
   private client: AtlasClient;
   private queuedFiles: Map<string, QueuedFile> = new Map();
   private address;
 
   private _directory = {} as IDirectory;
-  get directory(): IDirectory {
-    return this._directory;
-  }
-
   private _providers: Provider[] = [];
-  get providers(): Provider[] {
-    return this._providers;
-  }
 
   constructor(client: AtlasClient) {
+    super();
     this.client = client;
     this.address = client.getCurrentAddress();
   }
 
-  static async NewStorageHandler(client: AtlasClient, homeDir: string = 'home'): Promise<StorageHandler> {
-    const sh = new StorageHandler(client)
+  static async new(client: AtlasClient, initialPath: string = 'home'): Promise<StorageHandler> {
+    const handler = new StorageHandler(client);
+    await handler.loadDirectory(initialPath);
+    await handler.loadProviders();
+    return handler;
+  }
 
-    await sh.loadProviders()
-    await sh.loadDirectory(homeDir)
+  // Getters
+  get directory(): IDirectory {
+    return this._directory;
+  }
 
-    return sh
+  get providers(): Provider[] {
+    return this._providers;
   }
 
   /**
@@ -61,14 +70,14 @@ export class StorageHandler implements IStorageHandler {
     // [PHASE 2]: encrypted folder and children compatibility
     // [PHASE 3]: paginated children request handling
 
-    const dir = (await this.client.query.nebulix.filetree.v1.fileTreeNode({ path, owner: owner || this.address })).node
+    const dir = (await this.client.query.nebulix.filetree.v1.fileNode({ path, owner: owner || this.address })).node
     if (!dir) {
       // [TODO]: error handling
       throw new Error(`failed to get node ${path}, ${owner}`)
     }
-    const children = (await this.client.query.nebulix.filetree.v1.fileTreeNodeChildren({ path, owner: owner || this.address })).children ?? []
+    const children = (await this.client.query.nebulix.filetree.v1.fileNodeChildren({ path, owner: owner || this.address })).nodes ?? []
     
-    let newDir: IDirectory = { metadata: JSON.parse(dir.contents), files: [], subdirs: [], objects: [] };
+    let newDir: IDirectory = { metadata: JSON.parse(dir.contents), path, files: [], subdirs: [], objects: [] };
     for (const node of children) {
       switch (node.nodeType) {
         case "directory":
@@ -99,55 +108,192 @@ export class StorageHandler implements IStorageHandler {
   }
 
   /**
-   * Stage a file for upload
-   * Prepares the file by hashing, optional encryption, and chunking
+   * Queue a file immediately and process in background
    */
-  public async queueFile(
+  queueFileAsync(
     file: File,
-    options: FileUploadOptions
-  ): Promise<QueuedFile> {
-    try {
-      if (options.encryption) {
-        options.encryption.aes = options.encryption.aes ?? await generateAesKey();
+    options: FileUploadOptions = {}
+  ): void {
+    const queuedFile: QueuedFile = {
+      file,
+      merkleRoot: new Uint8Array(),
+      replicas: options.replicas || 3,
+      timestamp: Date.now(),
+      rawFile: file,
+      options,
+      status: 'queued',
+      error: ''
+    };
+    this.queuedFiles.set(file.name, queuedFile);
+    console.debug(`Queued File ${file.name}\n`, queuedFile)
 
-        file = await this.encryptFile(file, options.encryption)
+    // Start processing in background
+    this.processFile(file.name, options).catch(error => {
+      console.error(`Background processing failed for ${file.name}:`, error);
+    });
+  }
+
+  private async processFile(
+    fileName: string,
+    options: FileUploadOptions
+  ): Promise<void> {
+    const queuedFile = this.queuedFiles.get(fileName);
+    if (!queuedFile) return
+
+    try {
+      let file = queuedFile.rawFile;
+      let aesBundle: IAesBundle | undefined;
+
+      // Encryption step
+      if (options.encryption) {
+        this.updateFileStatus(fileName, 'encrypting');
+        options.encryption.aes = options.encryption.aes || await generateAesKey();
+        file = await encryptFile(file, options.encryption);
+
+        // Update file object
+        const updated = this.queuedFiles.get(fileName);
+        if (updated) {
+          updated.file = file;
+          updated.aes = aesBundle;
+          this.queuedFiles.set(fileName, updated);
+        }
+
+        this.emit(FileProcessingEvent.ENCRYPTED, {
+          fileName,
+          fileSize: queuedFile.rawFile.size,
+          stage: FileProcessingEvent.ENCRYPTED,
+          timestamp: Date.now()
+        });
       }
 
-      const tree = await buildMerkleTreeFromBlob(file);
+      this.updateFileStatus(fileName, 'merkling');
 
-      // create staged file object
-      const stagedFile: QueuedFile = {
-        file,
-        merkleRoot: tree.getRoot(),
-        aes: options.encryption?.aes,
+      // Merkle tree step
+      const tree = await buildFileMerkleTree(file);
+      console.timeEnd("MerkleFile")
+      console.log("merkletree built")
+      const merkleRoot = tree.getRoot();
+
+      // Update file object with merkle root
+      const updated = this.queuedFiles.get(fileName);
+      if (updated) {
+        updated.merkleRoot = merkleRoot;
+        this.queuedFiles.set(fileName, updated);
+      }
+
+      this.emit(FileProcessingEvent.MERKLE_BUILT, {
+        fileName,
+        fileSize: queuedFile.rawFile.size,
+        stage: FileProcessingEvent.MERKLE_BUILT,
         timestamp: Date.now(),
-      };
+        data: {
+          merkleRoot: bytesToHex(merkleRoot)
+        }
+      });
 
-      // Store in memory
-      this.queuedFiles.set(file.name, stagedFile);
+      console.log(bytesToHex(merkleRoot))
 
-      return stagedFile;
-    } catch (err) {
-      // [TODO]: proper error handling
-      // this is useless.. for now
-      throw err;
+      // Update status to ready
+      this.updateFileStatus(fileName, 'ready');
+
+      this.emit(FileProcessingEvent.READY, {
+        fileName,
+        fileSize: queuedFile.rawFile.size,
+        stage: FileProcessingEvent.READY,
+        timestamp: Date.now()
+      });
+
+    } catch (error: any) {
+      // Update status to error
+      this.updateFileStatus(fileName, 'error', error.message);
+      
+      this.emit(FileProcessingEvent.ERROR, {
+        fileName,
+        fileSize: queuedFile.rawFile.size,
+        stage: FileProcessingEvent.ERROR,
+        timestamp: Date.now(),
+        data: {
+          error: error.message
+        }
+      });
     }
   }
 
+  /**
+   * Update file status and emit change event
+   */
+  private updateFileStatus(fileName: string, status: QueuedFile['status'], error?: string): void {
+    const queuedFile = this.queuedFiles.get(fileName);
+    if (!queuedFile) return;
 
-  private async encryptFile(file: File, opts: EncryptionOptions): Promise<File> {
-    if (!opts.aes) throw new Error("AES key & iv are required in the encryption options!")
-
-    const encryptedBytes: Blob[] = []
-    for (let i = 0; i < file.size; i += opts.chunkSize ?? defaultEncryptionChunkSize) {
-      const blobChunk = file.slice(i, i + (opts.chunkSize ?? defaultEncryptionChunkSize))
-      encryptedBytes.push(
-        new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
-        await aesBlobCrypt(blobChunk, opts.aes, 'encrypt'),
-      )
+    queuedFile.status = status;
+    if (error) {
+      queuedFile.error = error;
+      console.error(`Error processing ${fileName}! ${error}`)
     }
+    
+    this.queuedFiles.set(fileName, queuedFile);
+    console.debug(`File ${fileName} Status: ${status}`)
+    // emit status change for UI updates
+    // this.emit('file:status-changed', {
+    //   fileName: queuedFile.rawFile.name,
+    //   status,
+    //   error,
+    //   timestamp: Date.now()
+    // });
+  }
 
-    return new File(encryptedBytes, file.name, { type: file.type, lastModified: file.lastModified })
+  public async upload(dir?: string) {
+    const creator = this.client.getCurrentAddress()
+    if (!creator) throw new Error(`Wallet not connected`);
+    // [TODO]: better way of determining this ^
+
+    if (!this.queuedFiles.size) throw new Error("Cannot upload! Queue is empty.")
+    
+    const msgs: any = []
+    this.queuedFiles.forEach((qfile) => {
+      msgs.push(
+        nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+          creator: creator,
+          path: `${dir ?? this._directory.path}/${qfile.file.name}`,
+          nodeType: "file",
+          contents: JSON.stringify(qfile)
+        })
+      )
+    })
+
+    
+    try {
+      const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+        creator: creator,
+        path: "home",
+        nodeType: "directory",
+        contents: ""
+      })
+
+      const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+        creator: creator,
+        path: "home/test.txt",
+        nodeType: "file",
+        contents: ""
+      })
+      const txHash = await this.client.signAndBroadcast([msg1, msg])
+
+      // [TODO]: actual file upload
+
+      // remove from staged files after successful upload
+      // this.queuedFiles.delete(qfile);
+
+      return {
+        fileId: "",
+        transactionHash: txHash,
+        storageNodes: [],
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      throw new Error(`Failed to upload file: ${error}`);
+    }
+    
   }
 
 
@@ -155,10 +301,15 @@ export class StorageHandler implements IStorageHandler {
    * Upload a staged file to the blockchain
    * Broadcasts a transaction to register the file
    */
-  async uploadQueuedFile(
+  private async old_uploadQueuedFile(
     queuedId: string,
     options: UploadOptions = {}
   ): Promise<UploadResult> {
+
+    const creator = this.client.getCurrentAddress()
+    if (!creator) throw new Error(`Wallet not connected`);
+    // [TODO]: better way of determining this ^
+
     try {
       // Get the staged file
       const queuedFile = this.queuedFiles.get(queuedId);
@@ -202,14 +353,14 @@ export class StorageHandler implements IStorageHandler {
       // }
 
       const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-        creator: this.client.getCurrentAddress(),
+        creator: creator,
         path: "home",
         nodeType: "directory",
         contents: ""
       })
 
       const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-        creator: this.client.getCurrentAddress(),
+        creator: creator,
         path: "home/test.txt",
         nodeType: "file",
         contents: ""
@@ -261,4 +412,19 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i]);
   }
   return window.btoa(binary);
+}
+
+async function encryptFile(file: File, opts: EncryptionOptions): Promise<File> {
+  if (!opts.aes) throw new Error("AES key & iv are required in the encryption options!")
+
+  const encryptedBytes: Blob[] = []
+  for (let i = 0; i < file.size; i += opts.chunkSize ?? defaultEncryptionChunkSize) {
+    const blobChunk = file.slice(i, i + (opts.chunkSize ?? defaultEncryptionChunkSize))
+    encryptedBytes.push(
+      new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
+      await aesBlobCrypt(blobChunk, opts.aes, 'encrypt'),
+    )
+  }
+
+  return new File(encryptedBytes, file.name, { type: file.type, lastModified: file.lastModified })
 }

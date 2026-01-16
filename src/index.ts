@@ -22,3 +22,6 @@ export type {
   IStorageHandler
 
 } from './interfaces'
+
+
+export * from './storage'

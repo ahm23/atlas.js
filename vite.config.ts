@@ -37,7 +37,7 @@ export default defineConfig({
         replacement: resolve(__dirname, "./node_modules", "@jackallabs", "browserify-aes"),
       },
     ],
-    extensions: ['.ts']
+    extensions: ['.js', '.ts']
   },
   build: {
     manifest: true,
@@ -51,26 +51,24 @@ export default defineConfig({
           dir: './dist',
           entryFileNames: 'index.cjs.js',
           format: 'cjs',
-          name: 'Jackal.js',
+          name: 'Atlas.js',
           plugins: []
         },
         {
           dir: './dist',
           entryFileNames: 'index.esm.js',
           format: 'esm',
-          name: 'Jackal.js',
+          name: 'Atlas.js',
           plugins: [
             nodePolyfills({ include: ['buffer', 'util'] })
           ]
         }
       ],
       external: [
-        /* Jackal.js-protos */
-        /@cosmjs.*/,
-        /cosmjs-types*/,
+        /* Atlas.js-protos */
         'grpc-web',
         'ts-proto',
-        /* Jackal.js */
+        /* Atlas.js */
         'ripemd160',
         'create-hash',
         'for-each',

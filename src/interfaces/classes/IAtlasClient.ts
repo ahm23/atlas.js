@@ -1,5 +1,6 @@
 import { WalletConnection, WalletType } from "@/wallets";
-import { IStorageHandler } from "./IStorageHandler";
+// import { IStorageHandler } from "./IStorageHandler";
+import { StorageHandler } from "@/storage";
 
 
 export interface IAtlasClient {
@@ -9,5 +10,5 @@ export interface IAtlasClient {
   connectWallet(type: WalletType, options?: any): Promise<WalletConnection>
   disconnectWallet(): Promise<void>
 
-  createStorageHandler(): IStorageHandler
+  createStorageHandler(): StorageHandler
 }
