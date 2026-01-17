@@ -8,9 +8,6 @@ export async function buildFileMerkleTree(
   hashFn: any = h_blake3, 
   chunkSize: number = 1024
 ): Promise<MerkleTree> {
-  console.log("segmenting");
-  console.time('SegmentFile');
-  
   const leaves: Uint8Array[] = [];
   const stream = bytes.stream();
   const reader = stream.getReader();
@@ -35,8 +32,13 @@ export async function buildFileMerkleTree(
         leaves.push(h_blake3(buffer.subarray(0, chunkSize)));
         // Remove processed chunk from buffer
         buffer = buffer.subarray(chunkSize);
+
+        // yield to UI operations every 100 leaves, to be tuned
+        if (leaves.length % 100 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
       }
-      
+
       if (done) {
         // Handle final partial chunk
         if (buffer.length > 0) {
@@ -48,9 +50,5 @@ export async function buildFileMerkleTree(
   } finally {
     reader.releaseLock();
   }
-  
-  console.timeEnd('SegmentFile');
-  console.log("segmenting done");
-  console.time('MerkleFile');
   return new MerkleTree(leaves, hashFn);
 }

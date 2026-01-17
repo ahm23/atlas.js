@@ -116,10 +116,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   /**
    * Queue a file immediately and process in background
    */
-  queueFileAsync(
+  async queueFileAsync(
     file: File,
     options: IFileUploadOptions = {}
-  ): void {
+  ): Promise<void> {
     // add the file to the upload queue
     const queuedFile: QueuedFile = {
       file,
@@ -133,75 +133,85 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     console.debug(`Queued File ${file.name}\n`, queuedFile)
 
     // start background file processing
-    this.processFile(file.name).catch(error => {
-      // console.error(`Background processing failed for ${file.name}:`, error);
-    });
+    await this.processFile(file.name)
   }
 
-  private processFile(
+  private async processFile(
     fileKey: string,
   ): Promise<void> {
-    return new Promise(async (_, reject) => {
-      const qfile = this.queuedFiles.get(fileKey);
-      if (!qfile) return
+    const qfile = this.queuedFiles.get(fileKey);
+    if (!qfile) return
 
-      try {
-        const abortController = new AbortController();
-        qfile.abortController = abortController;
-        this.queuedFiles.set(fileKey, qfile);
+    try {
+      const abortController = new AbortController();
+      qfile.abortController = abortController;
+      this.queuedFiles.set(fileKey, qfile);
 
-        const signal = abortController.signal;
-        console.log('Created AbortController, signal.aborted:', signal.aborted);
+      const signal = abortController.signal;
+      console.log('Created AbortController, signal.aborted:', signal.aborted);
 
-        /// Phase 1: encryption
-        if (qfile.encryption) {
-          this.updateQueuedFileStatus(fileKey, 'encrypting');
-          qfile.encryption.aes = qfile.encryption.aes || await generateAesKey();
+      /// Phase 1: encryption
+      if (qfile.encryption) {
+        this.updateQueuedFileStatus(fileKey, 'encrypting');
+        qfile.encryption.aes = qfile.encryption.aes || await generateAesKey();
 
-           if (!qfile.abortController) {
-          throw new Error('AbortController disappeared!');
-        }
-          qfile.file = await encryptFile(qfile.file, qfile.encryption, qfile.abortController.signal);
+          if (!qfile.abortController) {
+        throw new Error('AbortController disappeared!');
+      }
+        qfile.file = await encryptFile(qfile.file, qfile.encryption, qfile.abortController.signal);
 
-          this.emit(FileProcessingEvent.ENCRYPTED, fileKey, {
-            fileSize: qfile.file.size
-          });
-        }
-
-        this.updateQueuedFileStatus(fileKey, 'merkling');
-
-        /// Phase 2: merkle root
-        const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
-        qfile.merkleRoot = tree.getRoot();
-
-        this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
-          merkleRoot: bytesToHex(qfile.merkleRoot)
+        this.emit(FileProcessingEvent.ENCRYPTED, fileKey, {
+          fileSize: qfile.file.size
         });
+      }
 
-        this.queuedFiles.set(fileKey, qfile);
+      this.updateQueuedFileStatus(fileKey, 'merkling');
 
-        // update status to ready
-        this.updateQueuedFileStatus(fileKey, 'ready');
-        if (qfile.abortController.signal.aborted) 
-          throw new CancellationException()
-        else
-          this.emit(FileProcessingEvent.READY, fileKey);
+      /// Phase 2: merkle root
+      const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
+      qfile.merkleRoot = tree.getRoot();
 
-      } catch (error: unknown) {
-        this.updateQueuedFileStatus(fileKey, 'error');
-        if (error instanceof CancellationException) {
-          console.error(`File processing cancelled for ${fileKey} -- ${error.message}`);
-          this.removeQueuedFile(fileKey)
-        } else if (error instanceof Error) {
-          console.error(`Error during file processing for ${fileKey}: ${error.message}`);
-          this.emit(FileProcessingEvent.ERROR, fileKey, error.message);
-        } else {
-          console.error('An unknown error occurred');
-          this.emit(FileProcessingEvent.ERROR, fileKey, "unknown error");
-        }
-        reject()
-      }   
-    })
+      this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
+        merkleRoot: bytesToHex(qfile.merkleRoot)
+      });
+
+      this.queuedFiles.set(fileKey, qfile);
+
+      // update status to ready
+      this.updateQueuedFileStatus(fileKey, 'ready');
+      if (qfile.abortController.signal.aborted) 
+        throw new CancellationException()
+      else
+        this.emit(FileProcessingEvent.READY, fileKey);
+
+    } catch (error: unknown) {
+      this.updateQueuedFileStatus(fileKey, 'error');
+      if (error instanceof CancellationException) {
+        console.error(`File processing cancelled for ${fileKey} -- ${error.message}`);
+        this.removeQueuedFile(fileKey)
+      } else if (error instanceof Error) {
+        console.error(`Error during file processing for ${fileKey}: ${error.message}`);
+        this.emit(FileProcessingEvent.ERROR, fileKey, error.message);
+      } else {
+        console.error('An unknown error occurred');
+        this.emit(FileProcessingEvent.ERROR, fileKey, "unknown error");
+      }
+    }
+  }
+
+  /**
+   * Update queued file's metadata
+   * @param fileKey - file identifier (the original file name) 
+   * @param metadata - file metadata
+   */
+  public updateQueuedFileMetadata(fileKey: string, metadata: Partial<IFileMetadata>) {
+    const queuedFile = this.queuedFiles.get(fileKey);
+    if (!queuedFile) throw new FileNotInQueue(`File ${fileKey} not found in upload queue!`);
+
+    for (const [key, value] of Object.entries(metadata)) {
+      queuedFile[key] = value
+    }
+    return;
   }
 
   /**
@@ -213,16 +223,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     queuedFile.status = status;
     this.queuedFiles.set(fileKey, queuedFile);
-    return;
-  }
-
-  public updateQueuedFileMetadata(fileKey: string, metadata: Partial<IFileMetadata>) {
-    const queuedFile = this.queuedFiles.get(fileKey);
-    if (!queuedFile) throw new FileNotInQueue(`File ${fileKey} not found in upload queue!`);
-
-    for (const [key, value] of Object.entries(metadata)) {
-      queuedFile[key] = value
-    }
     return;
   }
 
