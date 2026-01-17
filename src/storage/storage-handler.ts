@@ -1,9 +1,9 @@
-import { defaultEncryptionChunkSize } from '@/utils/defaults';
+import { DEFAULT_ENCYRPTION_CHUNK_SIZE, DEFAULT_REPLICAS } from '@/utils/defaults';
 import { 
-  EncryptionOptions,
-  FileUploadOptions, 
+  IEncryptionOptions,
+  IFileUploadOptions, 
   QueuedFile, 
-  UploadOptions, 
+  IFileMetadata, 
   UploadResult,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
@@ -23,6 +23,7 @@ import MerkleTree from 'merkletreejs';
 import { buildFileMerkleTree } from '@/utils/merkletree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
 import EventEmitter from 'events';
+import { CancellationException, FileNotInQueue } from './exceptions';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -30,6 +31,8 @@ export enum FileProcessingEvent {
   READY = 'file:ready',
   ERROR = 'file:error'
 }
+
+export type StorageEvents = FileProcessingEvent // | UploadEvent;
 
 export class StorageHandler extends EventEmitter implements IStorageHandler {
   private client: AtlasClient;
@@ -44,6 +47,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.client = client;
     this.address = client.getCurrentAddress();
   }
+
+  declare on: (event: StorageEvents | string, listener: (...args: any[]) => void) => this;
+  declare emit: (event: StorageEvents | string, ...args: any[]) => boolean;
 
   static async new(client: AtlasClient, initialPath: string = 'home'): Promise<StorageHandler> {
     const handler = new StorageHandler(client);
@@ -112,135 +118,112 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   queueFileAsync(
     file: File,
-    options: FileUploadOptions = {}
+    options: IFileUploadOptions = {}
   ): void {
+    // add the file to the upload queue
     const queuedFile: QueuedFile = {
       file,
       merkleRoot: new Uint8Array(),
-      replicas: options.replicas || 3,
-      timestamp: Date.now(),
-      rawFile: file,
-      options,
-      status: 'queued',
-      error: ''
+      replicas: options.replicas || DEFAULT_REPLICAS,
+      encryption: options.encrypt ? options.encryptOpts ?? {} : undefined,
+      metadata: { name: file.name.replace(/\.[^/.]+$/, "") },
+      status: 'idle'
     };
     this.queuedFiles.set(file.name, queuedFile);
     console.debug(`Queued File ${file.name}\n`, queuedFile)
 
-    // Start processing in background
-    this.processFile(file.name, options).catch(error => {
-      console.error(`Background processing failed for ${file.name}:`, error);
+    // start background file processing
+    this.processFile(file.name).catch(error => {
+      // console.error(`Background processing failed for ${file.name}:`, error);
     });
   }
 
-  private async processFile(
-    fileName: string,
-    options: FileUploadOptions
+  private processFile(
+    fileKey: string,
   ): Promise<void> {
-    const queuedFile = this.queuedFiles.get(fileName);
-    if (!queuedFile) return
+    return new Promise(async (_, reject) => {
+      const qfile = this.queuedFiles.get(fileKey);
+      if (!qfile) return
 
-    try {
-      let file = queuedFile.rawFile;
-      let aesBundle: IAesBundle | undefined;
+      try {
+        const abortController = new AbortController();
+        qfile.abortController = abortController;
+        this.queuedFiles.set(fileKey, qfile);
 
-      // Encryption step
-      if (options.encryption) {
-        this.updateFileStatus(fileName, 'encrypting');
-        options.encryption.aes = options.encryption.aes || await generateAesKey();
-        file = await encryptFile(file, options.encryption);
+        const signal = abortController.signal;
+        console.log('Created AbortController, signal.aborted:', signal.aborted);
 
-        // Update file object
-        const updated = this.queuedFiles.get(fileName);
-        if (updated) {
-          updated.file = file;
-          updated.aes = aesBundle;
-          this.queuedFiles.set(fileName, updated);
+        /// Phase 1: encryption
+        if (qfile.encryption) {
+          this.updateQueuedFileStatus(fileKey, 'encrypting');
+          qfile.encryption.aes = qfile.encryption.aes || await generateAesKey();
+
+           if (!qfile.abortController) {
+          throw new Error('AbortController disappeared!');
+        }
+          qfile.file = await encryptFile(qfile.file, qfile.encryption, qfile.abortController.signal);
+
+          this.emit(FileProcessingEvent.ENCRYPTED, fileKey, {
+            fileSize: qfile.file.size
+          });
         }
 
-        this.emit(FileProcessingEvent.ENCRYPTED, {
-          fileName,
-          fileSize: queuedFile.rawFile.size,
-          stage: FileProcessingEvent.ENCRYPTED,
-          timestamp: Date.now()
+        this.updateQueuedFileStatus(fileKey, 'merkling');
+
+        /// Phase 2: merkle root
+        const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
+        qfile.merkleRoot = tree.getRoot();
+
+        this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
+          merkleRoot: bytesToHex(qfile.merkleRoot)
         });
-      }
 
-      this.updateFileStatus(fileName, 'merkling');
+        this.queuedFiles.set(fileKey, qfile);
 
-      // Merkle tree step
-      const tree = await buildFileMerkleTree(file);
-      console.timeEnd("MerkleFile")
-      console.log("merkletree built")
-      const merkleRoot = tree.getRoot();
+        // update status to ready
+        this.updateQueuedFileStatus(fileKey, 'ready');
+        if (qfile.abortController.signal.aborted) 
+          throw new CancellationException()
+        else
+          this.emit(FileProcessingEvent.READY, fileKey);
 
-      // Update file object with merkle root
-      const updated = this.queuedFiles.get(fileName);
-      if (updated) {
-        updated.merkleRoot = merkleRoot;
-        this.queuedFiles.set(fileName, updated);
-      }
-
-      this.emit(FileProcessingEvent.MERKLE_BUILT, {
-        fileName,
-        fileSize: queuedFile.rawFile.size,
-        stage: FileProcessingEvent.MERKLE_BUILT,
-        timestamp: Date.now(),
-        data: {
-          merkleRoot: bytesToHex(merkleRoot)
+      } catch (error: unknown) {
+        this.updateQueuedFileStatus(fileKey, 'error');
+        if (error instanceof CancellationException) {
+          console.error(`File processing cancelled for ${fileKey} -- ${error.message}`);
+          this.removeQueuedFile(fileKey)
+        } else if (error instanceof Error) {
+          console.error(`Error during file processing for ${fileKey}: ${error.message}`);
+          this.emit(FileProcessingEvent.ERROR, fileKey, error.message);
+        } else {
+          console.error('An unknown error occurred');
+          this.emit(FileProcessingEvent.ERROR, fileKey, "unknown error");
         }
-      });
-
-      console.log(bytesToHex(merkleRoot))
-
-      // Update status to ready
-      this.updateFileStatus(fileName, 'ready');
-
-      this.emit(FileProcessingEvent.READY, {
-        fileName,
-        fileSize: queuedFile.rawFile.size,
-        stage: FileProcessingEvent.READY,
-        timestamp: Date.now()
-      });
-
-    } catch (error: any) {
-      // Update status to error
-      this.updateFileStatus(fileName, 'error', error.message);
-      
-      this.emit(FileProcessingEvent.ERROR, {
-        fileName,
-        fileSize: queuedFile.rawFile.size,
-        stage: FileProcessingEvent.ERROR,
-        timestamp: Date.now(),
-        data: {
-          error: error.message
-        }
-      });
-    }
+        reject()
+      }   
+    })
   }
 
   /**
    * Update file status and emit change event
    */
-  private updateFileStatus(fileName: string, status: QueuedFile['status'], error?: string): void {
-    const queuedFile = this.queuedFiles.get(fileName);
-    if (!queuedFile) return;
+  private updateQueuedFileStatus(fileKey: string, status: QueuedFile['status']): void {
+    const queuedFile = this.queuedFiles.get(fileKey);
+    if (!queuedFile) throw new FileNotInQueue(`File ${fileKey} not found in upload queue!`);
 
     queuedFile.status = status;
-    if (error) {
-      queuedFile.error = error;
-      console.error(`Error processing ${fileName}! ${error}`)
+    this.queuedFiles.set(fileKey, queuedFile);
+    return;
+  }
+
+  public updateQueuedFileMetadata(fileKey: string, metadata: Partial<IFileMetadata>) {
+    const queuedFile = this.queuedFiles.get(fileKey);
+    if (!queuedFile) throw new FileNotInQueue(`File ${fileKey} not found in upload queue!`);
+
+    for (const [key, value] of Object.entries(metadata)) {
+      queuedFile[key] = value
     }
-    
-    this.queuedFiles.set(fileName, queuedFile);
-    console.debug(`File ${fileName} Status: ${status}`)
-    // emit status change for UI updates
-    // this.emit('file:status-changed', {
-    //   fileName: queuedFile.rawFile.name,
-    //   status,
-    //   error,
-    //   timestamp: Date.now()
-    // });
+    return;
   }
 
   public async upload(dir?: string) {
@@ -303,7 +286,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   private async old_uploadQueuedFile(
     queuedId: string,
-    options: UploadOptions = {}
+    // options: IFileMetadata = {}
   ): Promise<UploadResult> {
 
     const creator = this.client.getCurrentAddress()
@@ -393,8 +376,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   /**
    * Remove queued file
    */
-  removeQueuedFile(id: string): boolean {
-    return this.queuedFiles.delete(id);
+  removeQueuedFile(fileKey: string): void {
+    const queuedFile = this.queuedFiles.get(fileKey);
+    if (queuedFile && queuedFile.status != 'ready') queuedFile.abortController.abort();
+    else this.queuedFiles.delete(fileKey);
   }
 
   /**
@@ -414,12 +399,15 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return window.btoa(binary);
 }
 
-async function encryptFile(file: File, opts: EncryptionOptions): Promise<File> {
+async function encryptFile(file: File, opts: IEncryptionOptions, signal: AbortSignal): Promise<File> {
   if (!opts.aes) throw new Error("AES key & iv are required in the encryption options!")
 
   const encryptedBytes: Blob[] = []
-  for (let i = 0; i < file.size; i += opts.chunkSize ?? defaultEncryptionChunkSize) {
-    const blobChunk = file.slice(i, i + (opts.chunkSize ?? defaultEncryptionChunkSize))
+  for (let i = 0; i < file.size; i += opts.chunkSize ?? DEFAULT_ENCYRPTION_CHUNK_SIZE) {
+    if (signal.aborted) {
+      throw new CancellationException('Encryption cancelled');
+    }
+    const blobChunk = file.slice(i, i + (opts.chunkSize ?? DEFAULT_ENCYRPTION_CHUNK_SIZE))
     encryptedBytes.push(
       new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
       await aesBlobCrypt(blobChunk, opts.aes, 'encrypt'),

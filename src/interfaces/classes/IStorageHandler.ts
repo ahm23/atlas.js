@@ -1,4 +1,4 @@
-import { FileUploadOptions, QueuedFile, UploadOptions, UploadResult } from "@/storage/types";
+import { IFileUploadOptions, QueuedFile, IFileMetadata, UploadResult } from "@/storage/types";
 
 
 export interface IStorageHandler {

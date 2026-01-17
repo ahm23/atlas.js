@@ -1,8 +1,10 @@
 import MerkleTree from "merkletreejs";
 import { h_blake3 } from "./hash";
+import { CancellationException } from "@/storage";
 
 export async function buildFileMerkleTree(
-  bytes: Blob, 
+  bytes: Blob,
+  signal: AbortSignal,
   hashFn: any = h_blake3, 
   chunkSize: number = 1024
 ): Promise<MerkleTree> {
@@ -28,6 +30,7 @@ export async function buildFileMerkleTree(
       
       // Process complete chunks from buffer
       while (buffer.length >= chunkSize) {
+        if (signal.aborted) throw new CancellationException('Merkling cancelled')
         // Use subarray to avoid copying
         leaves.push(h_blake3(buffer.subarray(0, chunkSize)));
         // Remove processed chunk from buffer

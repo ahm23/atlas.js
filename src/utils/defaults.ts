@@ -1,6 +1,7 @@
 import { IChainConfig } from "@/wallets/types";
 
-export const defaultEncryptionChunkSize: number = 32 * Math.pow(1024, 2)
+export const DEFAULT_REPLICAS: number = 3
+export const DEFAULT_ENCYRPTION_CHUNK_SIZE: number = 32 * Math.pow(1024, 2)
 export const keyAlgo: AesKeyGenParams = {
   name: 'AES-GCM',
   length: 256,
