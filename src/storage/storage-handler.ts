@@ -5,6 +5,7 @@ import {
   QueuedFile, 
   IFileMetadata, 
   UploadResult,
+  IFileNodeContents,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
@@ -24,6 +25,7 @@ import { buildFileMerkleTree } from '@/utils/merkletree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
 import EventEmitter from 'events';
 import { CancellationException, FileNotInQueue } from './exceptions';
+import { MessageComposer } from '@/messages/composer';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -215,7 +217,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   }
 
   /**
-   * Update file status and emit change event
+   * Update the status of a queued file
+   * @param fileKey - file identifier
+   * @param status - new file status
    */
   private updateQueuedFileStatus(fileKey: string, status: QueuedFile['status']): void {
     const queuedFile = this.queuedFiles.get(fileKey);
@@ -226,42 +230,46 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return;
   }
 
+  /**
+   * Start file upload
+   * @param dir
+   * @returns 
+   */
   public async upload(dir?: string) {
     const creator = this.client.getCurrentAddress()
     if (!creator) throw new Error(`Wallet not connected`);
     // [TODO]: better way of determining this ^
+    const now = Date.now();
 
     if (!this.queuedFiles.size) throw new Error("Cannot upload! Queue is empty.")
     
-    const msgs: any = []
-    this.queuedFiles.forEach((qfile) => {
-      msgs.push(
-        nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-          creator: creator,
-          path: `${dir ?? this._directory.path}/${qfile.file.name}`,
-          nodeType: "file",
-          contents: JSON.stringify(qfile)
-        })
-      )
-    })
+          
+    try {  
+      const msgs: any = []
+      this.queuedFiles.forEach((qfile) => {
+        const contents: IFileNodeContents = {
+          name: qfile.metadata.name,
+          size: qfile.file.size,
+          type: qfile.file.type,
+          lastModified: qfile.file.lastModified,
 
-    
-    try {
-      const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-        creator: creator,
-        path: "home",
-        nodeType: "directory",
-        contents: ""
+          merkleRoot: bytesToHex(qfile.merkleRoot),
+          lastUpdated: now,
+          dateCreated: now,
+        }
+
+        msgs.push(
+          MessageComposer.MsgPostNode(
+            creator,
+            `${dir ?? this._directory.path}/${qfile.file.name}`,
+            "file",
+            JSON.stringify(contents),
+          )
+        )
       })
 
-      const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-        creator: creator,
-        path: "home/test.txt",
-        nodeType: "file",
-        contents: ""
-      })
-      const txHash = await this.client.signAndBroadcast([msg1, msg])
-
+      const txResult = await this.client.signAndBroadcast(msgs)
+      console.log(txResult)
       // [TODO]: actual file upload
 
       // remove from staged files after successful upload
@@ -269,14 +277,13 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
       return {
         fileId: "",
-        transactionHash: txHash,
+        transactionHash: txResult.hash,
         storageNodes: [],
         timestamp: Date.now()
       };
     } catch (error) {
       throw new Error(`Failed to upload file: ${error}`);
     }
-    
   }
 
 
@@ -284,6 +291,19 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Upload a staged file to the blockchain
    * Broadcasts a transaction to register the file
    */
+  // const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+  //       creator: creator,
+  //       path: "home",
+  //       nodeType: "directory",
+  //       contents: ""
+  //     })
+
+  //     const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+  //       creator: creator,
+  //       path: "home/test.txt",
+  //       nodeType: "file",
+  //       contents: ""
+  //     })
   private async old_uploadQueuedFile(
     queuedId: string,
     // options: IFileMetadata = {}
@@ -335,21 +355,22 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       //   value: cmsg_raw
       // }
 
-      const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+      const msg1 = nebulix.filetree.v1.MsgPostNode.toProtoMsg({
         creator: creator,
         path: "home",
         nodeType: "directory",
         contents: ""
       })
 
-      const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
+      const msg = nebulix.filetree.v1.MsgPostNode.toProtoMsg({
         creator: creator,
         path: "home/test.txt",
         nodeType: "file",
         contents: ""
       })
-      const txHash = await this.client.signAndBroadcast([msg1, msg])
+      const txResult = await this.client.signAndBroadcast([msg1, msg])
 
+      console.log(txResult)
       // [TODO]: actual file upload
 
       // remove from staged files after successful upload
@@ -357,7 +378,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
       return {
         fileId: "",
-        transactionHash: txHash,
+        transactionHash: txResult.hash,
         storageNodes: [],
         timestamp: Date.now()
       };

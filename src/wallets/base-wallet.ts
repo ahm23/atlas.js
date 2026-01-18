@@ -8,8 +8,9 @@ import {
 } from './types';
 import { DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { OfflineSigner as OfflineAminoSigner, Registry } from '@cosmjs/proto-signing';
+import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import { GasPrice } from '@cosmjs/stargate';
-import { nebulix, cosmos } from '@atlas/atlas.js-protos'
+import { nebulix, cosmos, GlobalDecoderRegistry } from '@atlas/atlas.js-protos'
 import { toBase64, toHex } from "@cosmjs/encoding";
 
 export abstract class BaseWallet {
@@ -32,7 +33,36 @@ export abstract class BaseWallet {
   abstract signArbitrary(data: string | Uint8Array): Promise<SigningResult>;
   
   // Concrete methods that use persistent client
-  async signTransaction(txBody: any, options?: TxOptions): Promise<DeliverTxResponse> {
+  async signAndBroadcastTransaction(txBody: any, options?: TxOptions): Promise<DeliverTxResponse> {
+    if (!this.walletConnection) {
+      throw new Error('Wallet not connected');
+    }
+
+    if (!this.signingClient) {
+      throw new Error('Signing client not initialized');
+    }
+
+    try {
+      const fee = options?.fee || {
+        amount: [{ denom: 'uatl', amount: '250000' }],
+        gas: options?.gas || '250000'
+      };
+      console.log("signed tx msgs:", txBody.msgs)
+      const signedTx = await this.signingClient.signAndBroadcast(
+        this.walletConnection.address,
+        txBody.msgs,
+        fee,
+        options?.memo || ''
+      );
+
+      return signedTx;
+    } catch (error: any) {
+      throw new Error(`Transaction signing failed: ${error.message}`);
+    }
+  }
+
+  // Concrete methods that use persistent client
+  async signTransaction(txBody: any, options?: TxOptions): Promise<TxRaw> {
     if (!this.walletConnection) {
       throw new Error('Wallet not connected');
     }
@@ -47,7 +77,7 @@ export abstract class BaseWallet {
         gas: options?.gas || '0'
       };
       console.log("signed tx msgs:", txBody.msgs)
-      const signedTx = await this.signingClient.signAndBroadcast(
+      const signedTx = await this.signingClient.sign(
         this.walletConnection.address,
         txBody.msgs,
         fee,
@@ -135,7 +165,14 @@ export abstract class BaseWallet {
 
       // Create registry with the new, correctly-generated types
       const registry = new Registry();
-      nebulix.storage.v1.load(registry)
+      console.log("REGISTRY:", GlobalDecoderRegistry.registry)
+      for (const [typeUrl, decoder] of Object.entries(GlobalDecoderRegistry.registry)) {
+        registry.register(typeUrl, decoder as any);  // 'as any' to satisfy types (TelescopeGeneratedCodec extends GeneratedType)
+      }
+      // nebulix.storage.v1.load(registry)
+      // nebulix.filetree.v1.load(registry)
+
+      // this.signingClient = await nebu
 
       // Create client
       this.signingClient = await SigningStargateClient.connectWithSigner(
@@ -147,49 +184,46 @@ export abstract class BaseWallet {
          }
       );
 
-      const originalBroadcastTx = this.signingClient.broadcastTx;
+      // const originalBroadcastTx = this.signingClient.broadcastTx;
   
-      this.signingClient.broadcastTx = async function(txBytes) {
-        console.log("TxBytes:", txBytes);
-        console.log("Broadcasting transaction bytes:", {
-          length: txBytes.length,
-          hex: toHex(txBytes),
-          base64: toBase64(txBytes)
-        });
-        return originalBroadcastTx.call(this, txBytes);
-      };
+      // this.signingClient.broadcastTx = async function(txBytes) {
+      //   console.log("TxBytes:", txBytes);
+      //   console.log("Broadcasting transaction bytes:", {
+      //     length: txBytes.length,
+      //     hex: toHex(txBytes),
+      //     base64: toBase64(txBytes)
+      //   });
+      //   return originalBroadcastTx.call(this, txBytes);
+      // };
 
-      const originalEncode = cosmos.bank.v1beta1.MsgSend.encode;
-      let encodeCallCount = 0;
-      let encodeInput = null;
+      // const originalEncode = cosmos.bank.v1beta1.MsgSend.encode;
+      // let encodeCallCount = 0;
+      // let encodeInput = null;
       
-      cosmos.bank.v1beta1.MsgSend.encode = function(message, writer) {
-        encodeCallCount++;
-        encodeInput = message;
-        console.log(`Encode called #${encodeCallCount}:`, {
-          constructor: message.constructor.name,
-          // isTelescopeObject: message instanceof cosmos.bank.v1beta1.MsgSend,
-          rawData: message
-        });
-        return originalEncode.call(this, message, writer);
-      };
+      // cosmos.bank.v1beta1.MsgSend.encode = function(message, writer) {
+      //   encodeCallCount++;
+      //   encodeInput = message;
+      //   console.log(`Encode called #${encodeCallCount}:`, {
+      //     constructor: message.constructor.name,
+      //     // isTelescopeObject: message instanceof cosmos.bank.v1beta1.MsgSend,
+      //     rawData: message
+      //   });
+      //   return originalEncode.call(this, message, writer);
+      // };
 
       console.log(offlineSigner)
       console.log(this.signingClient)
 
-      const sendAmount = { denom: "uatl", amount: "1000" };
+      const sendAmount = { denom: "uatl", amount: "100000" };
       try {
         const resp = await this.signingClient.sendTokens(
           "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
-          "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+          "atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x",
           [sendAmount],
-          {
-            amount: [{ denom: 'uatl', amount: '0' }],
-            gas: '0'
-          },
+          "auto"
         )
-      } catch {
-
+      } catch (err: any) {
+        console.error("err!", err)
       }
 
 

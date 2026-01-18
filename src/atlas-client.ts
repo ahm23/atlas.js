@@ -5,6 +5,7 @@ import { nebulix } from '@atlas/atlas.js-protos';
 import { QueryClient } from './wallets/types'
 import { IStorageHandler } from './interfaces';
 import { IAtlasClient } from './interfaces/classes/IAtlasClient';
+import { IndexedTx } from '@cosmjs/stargate';
 
 export interface AtlasConfig {
   chainId: string;
@@ -138,7 +139,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   async signAndBroadcast(
     messages: any[],
     memo?: string,
-  ): Promise<string> {
+  ): Promise<IndexedTx> {
     
     if (!this.isWalletConnected()) {
       throw new Error('Wallet not connected. Connect a wallet first.');
@@ -146,12 +147,56 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
     try {
       console.log("Messages:", messages)
-      const result = await this.walletManager.signAndBroadcast(messages, memo, undefined);
-      return result.transactionHash
+      const txHash = await this.walletManager.signAndBroadcast(messages, { memo });
+      const result = await this.waitForTransaction(txHash)
+      return result
     } catch (error) {
       this.emit('error', error);
       throw error;
     }
+  }
+
+  private async waitForTransaction(
+    txHash: string, 
+    timeout: number = 12000,
+    pollInterval: number = 2000
+  ): Promise<IndexedTx> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        // Query transaction using the hash
+        console.log("TX HASH:", txHash)
+        const txResponse = await this.walletManager.getQueryClient().getTx(txHash);
+        
+        // Check if transaction has been included in a block
+        if (txResponse) {
+          // Check transaction status (code 0 means success)
+          if (txResponse.code === 0) {
+            console.log(`Transaction ${txHash} succeeded`);
+            return txResponse;
+          } else {
+            // Transaction failed with an error code
+            throw new Error(
+              `Transaction ${txHash} failed with code ${txResponse.code}: ${txResponse.rawLog}`
+            );
+          }
+        }
+      } catch (error) {
+        // If error is not "not found", re-throw it
+        if (!error.message?.includes('not found') && 
+            !error.message?.includes('404') &&
+            !error.message?.includes('does not exist')) {
+          throw error;
+        }
+        // Transaction not found yet, continue polling
+      }
+      
+      // Wait before polling again
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    throw new Error(`Transaction ${txHash} timeout after ${timeout}ms`);
   }
 
   /**

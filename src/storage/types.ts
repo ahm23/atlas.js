@@ -34,6 +34,17 @@ export interface QueuedFile {
   abortController?: AbortController;
 }
 
+export interface IFileNodeContents {
+  name: string
+  size: number
+  type: string
+  lastModified: number
+
+  merkleRoot: string
+  lastUpdated: number
+  dateCreated: number
+}
+
 export interface UploadResult {
   fileId: string;
   transactionHash: string;

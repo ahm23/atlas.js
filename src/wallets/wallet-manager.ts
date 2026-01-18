@@ -100,26 +100,24 @@ export class WalletManager {
 
   async signAndBroadcast(
     messages: any[],
-    memo?: string,
     options?: TxOptions
-  ): Promise<BroadcastResult> {
+  ): Promise<string> {
     if (!this.wallet) {
       throw new Error('No wallet connected');
     }
 
     const txBody = { msgs: messages };
     console.log("txBody:", txBody)
-    const signed = await this.wallet.signTransaction(txBody, options);
-    console.log("Signed Tx:", signed)
-    // return await this.wallet.broadcastTransaction(signed.signedTx!.bodyBytes);
-    return
+    const txResult = await this.wallet.signAndBroadcastTransaction(txBody, options);
+    console.log("Signed Tx:", txResult)
+    return txResult.transactionHash
   }
 
   async signTransaction(txBody: any, options?: TxOptions): Promise<DeliverTxResponse> {
     if (!this.wallet) {
       throw new Error('No wallet connected');
     }
-    return await this.wallet.signTransaction(txBody, options);
+    return await this.wallet.signAndBroadcastTransaction(txBody, options);
   }
 
   async broadcastTransaction(signedTx: Uint8Array): Promise<BroadcastResult> {

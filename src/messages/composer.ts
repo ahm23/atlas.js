@@ -1,6 +1,7 @@
 // src/messages/composer.ts
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { nebulix } from '@atlas/atlas.js-protos';
+import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export class MessageComposer {
   /**
@@ -14,7 +15,7 @@ export class MessageComposer {
     subscription: string = ""
   ): EncodeObject {
     // Use the MessageComposer from your protos
-    return nebulix.storage.v1.MessageComposer.withTypeUrl.postFile({
+    return nebulix.storage.v1.MsgPostFile.toProtoMsg({
       creator,
       merkle: merkleRoot,
       fileSize,
@@ -26,18 +27,21 @@ export class MessageComposer {
   /**
    * Creates a file tree node message
    */
-  static createFileTreeNodeMsg(
+  static MsgPostNode(
     creator: string,
     path: string,
     nodeType: 'file' | 'directory',
     contents: string
   ): EncodeObject {
-    return nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-      creator,
-      path,
-      nodeType,
-      contents
-    });
+    return {
+      typeUrl: MsgPostNode.typeUrl,
+      value: MsgPostNode.fromPartial({
+        creator,
+        path,
+        nodeType,
+        contents
+      })
+    };
   }
 
   /**
