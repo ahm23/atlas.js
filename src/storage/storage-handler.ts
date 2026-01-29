@@ -26,6 +26,7 @@ import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/p
 import EventEmitter from 'events';
 import { CancellationException, FileNotInQueue } from './exceptions';
 import { MessageComposer } from '@/messages/composer';
+import { UploadHelper } from './upload-helper';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -126,6 +127,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const queuedFile: QueuedFile = {
       file,
       merkleRoot: new Uint8Array(),
+      nonce: Math.floor(Math.random() * 2_147_483_647),
       replicas: options.replicas || DEFAULT_REPLICAS,
       encryption: options.encrypt ? options.encryptOpts ?? {} : undefined,
       metadata: { name: file.name.replace(/\.[^/.]+$/, "") },
@@ -176,6 +178,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
         merkleRoot: bytesToHex(qfile.merkleRoot)
       });
+
+      /// Phase 3: generate fid
+      qfile.fid = await hashAndHex(bytesToHex(qfile.merkleRoot) + this.client.getCurrentAddress() + qfile.nonce)
 
       this.queuedFiles.set(fileKey, qfile);
 
@@ -242,12 +247,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const now = Date.now();
 
     if (!this.queuedFiles.size) throw new Error("Cannot upload! Queue is empty.")
-    
           
     try {  
-      const msgs: any = []
-      this.queuedFiles.forEach((qfile) => {
+      const msgs_postFile: any = []
+      const msgs_postNode: any = []
+      this.queuedFiles.forEach(async (qfile) => {
+
         const contents: IFileNodeContents = {
+          fid: qfile.fid,
           name: qfile.metadata.name,
           size: qfile.file.size,
           type: qfile.file.type,
@@ -258,130 +265,34 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
           dateCreated: now,
         }
 
-        msgs.push(
+        msgs_postFile.push(
+          MessageComposer.MsgPostFile(
+            creator,
+            qfile.merkleRoot,
+            qfile.file.size,
+            qfile.replicas,
+            qfile.nonce
+          )
+        )
+        msgs_postNode.push(
           MessageComposer.MsgPostNode(
             creator,
-            `${dir ?? this._directory.path}/${qfile.file.name}`,
+            `${dir ?? this._directory.path}/${qfile.fid}`,
             "file",
             JSON.stringify(contents),
           )
         )
       })
-
-      const txResult = await this.client.signAndBroadcast(msgs)
+      
+      const txResult = await this.client.signAndBroadcast([...msgs_postFile, ...msgs_postNode])
       console.log(txResult)
-      // [TODO]: actual file upload
 
-      // remove from staged files after successful upload
-      // this.queuedFiles.delete(qfile);
-
-      return {
-        fileId: "",
-        transactionHash: txResult.hash,
-        storageNodes: [],
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      throw new Error(`Failed to upload file: ${error}`);
-    }
-  }
-
-
-  /**
-   * Upload a staged file to the blockchain
-   * Broadcasts a transaction to register the file
-   */
-  // const msg1 = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-  //       creator: creator,
-  //       path: "home",
-  //       nodeType: "directory",
-  //       contents: ""
-  //     })
-
-  //     const msg = nebulix.filetree.v1.MessageComposer.withTypeUrl.postNode({
-  //       creator: creator,
-  //       path: "home/test.txt",
-  //       nodeType: "file",
-  //       contents: ""
-  //     })
-  private async old_uploadQueuedFile(
-    queuedId: string,
-    // options: IFileMetadata = {}
-  ): Promise<UploadResult> {
-
-    const creator = this.client.getCurrentAddress()
-    if (!creator) throw new Error(`Wallet not connected`);
-    // [TODO]: better way of determining this ^
-
-    try {
-      // Get the staged file
-      const queuedFile = this.queuedFiles.get(queuedId);
-      if (!queuedFile) {
-        throw new Error(`No queued file found with ID: ${queuedId}`);
-      }
-
-      // const msg = nebulix.storage.v1.MessageComposer.encoded.postFile({
-      //     creator: this.client.getCurrentAddress(),
-      //     merkle: queuedFile.merkleRoot,
-      //     fileSize: BigInt(queuedFile.file.size),
-      //     replicas: BigInt(queuedFile.replicas ?? 3),
-      //     subscription: ""
-      //   })
-
-      // const protoMsg = nebulix.storage.v1.MsgBuyStorage.toProtoMsg({
-      //   creator: this.client.getCurrentAddress(),
-      //   receiver: '',
-      //   duration: BigInt(720),
-      //   bytes: BigInt(1000000000),
-      //   isDefault: true
-      // })
-      // await debugEncoding()
-      // const msg = nebulix.storage.v1.MessageComposer.withTypeUrl.buyStorage({
-      //   creator: this.client.getCurrentAddress(),
-      //   receiver: this.client.getCurrentAddress(),
-      //   duration: 720n,
-      //   bytes: 100000000n,
-      //   isDefault: true
-      // })
-
-      // const cmsg_raw = cosmos.bank.v1beta1.MsgSend.fromPartial({
-      //   fromAddress: this.client.getCurrentAddress(),
-      //   toAddress: this.client.getCurrentAddress(),
-      //   amount: [{ denom: "uatl", amount: "1000" }]
-      // })
-
-      // const cmsg = {
-      //   typeUrl: cosmos.bank.v1beta1.MsgSend.typeUrl,
-      //   value: cmsg_raw
-      // }
-
-      const msg1 = nebulix.filetree.v1.MsgPostNode.toProtoMsg({
-        creator: creator,
-        path: "home",
-        nodeType: "directory",
-        contents: ""
+      this.queuedFiles.forEach(async (qfile) => {
+        await UploadHelper.upload("https://api.oculux.io/upload", qfile.fid, qfile.file, null)
+        this.queuedFiles.delete(qfile.file.name);
       })
 
-      const msg = nebulix.filetree.v1.MsgPostNode.toProtoMsg({
-        creator: creator,
-        path: "home/test.txt",
-        nodeType: "file",
-        contents: ""
-      })
-      const txResult = await this.client.signAndBroadcast([msg1, msg])
-
-      console.log(txResult)
-      // [TODO]: actual file upload
-
-      // remove from staged files after successful upload
-      this.queuedFiles.delete(queuedId);
-
-      return {
-        fileId: "",
-        transactionHash: txResult.hash,
-        storageNodes: [],
-        timestamp: Date.now()
-      };
+      return;
     } catch (error) {
       throw new Error(`Failed to upload file: ${error}`);
     }

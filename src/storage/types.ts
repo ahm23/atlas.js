@@ -24,7 +24,10 @@ export interface IFileMetadata {
 
 export interface QueuedFile {
   file: File
+
+  fid?: string
   merkleRoot: Uint8Array
+  nonce: number
 
   replicas: number
   encryption?: IEncryptionOptions
@@ -35,6 +38,7 @@ export interface QueuedFile {
 }
 
 export interface IFileNodeContents {
+  fid: string
   name: string
   size: number
   type: string

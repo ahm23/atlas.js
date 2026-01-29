@@ -7,19 +7,21 @@ export class MessageComposer {
   /**
    * Creates a properly formatted EncodeObject for file upload
    */
-  static createFileUploadMsg(
+  static MsgPostFile(
     creator: string,
     merkleRoot: Uint8Array,
-    fileSize: bigint,
-    replicas: bigint = 3n,
+    fileSize: number,
+    replicas: number = 3,
+    nonce: number,
     subscription: string = ""
   ): EncodeObject {
     // Use the MessageComposer from your protos
     return nebulix.storage.v1.MsgPostFile.toProtoMsg({
       creator,
       merkle: merkleRoot,
-      fileSize,
-      replicas,
+      fileSize: BigInt(fileSize),
+      replicas: replicas,
+      nonce: nonce,
       subscription
     });
   }
