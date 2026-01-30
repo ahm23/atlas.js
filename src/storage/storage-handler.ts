@@ -282,8 +282,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
             JSON.stringify(contents),
           )
         )
+
+        console.log(qfile, msgs_postFile)
       })
-      
+
       const txResult = await this.client.signAndBroadcast([...msgs_postFile, ...msgs_postNode])
       console.log(txResult)
 

@@ -100,7 +100,7 @@ export class UploadHelper {
         // Server responded with error status
         throw new Error(
           `Server error: ${axiosError.response.status} - ${
-            axiosError.response.data?.message || axiosError.message
+            (axiosError.response.data as any).message || axiosError.message
           }`
         );
       } else if (axiosError.request) {

@@ -1,6 +1,7 @@
 // src/messages/composer.ts
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { nebulix } from '@atlas/atlas.js-protos';
+import { MsgPostFile } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
 import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export class MessageComposer {
@@ -16,14 +17,17 @@ export class MessageComposer {
     subscription: string = ""
   ): EncodeObject {
     // Use the MessageComposer from your protos
-    return nebulix.storage.v1.MsgPostFile.toProtoMsg({
-      creator,
-      merkle: merkleRoot,
-      fileSize: BigInt(fileSize),
-      replicas: replicas,
-      nonce: nonce,
-      subscription
-    });
+    return {
+      typeUrl: MsgPostFile.typeUrl,
+      value: MsgPostFile.fromPartial({
+        creator,
+        merkle: merkleRoot,
+        fileSize: BigInt(fileSize),
+        replicas: replicas,
+        nonce: nonce,
+        subscription
+      })
+    };
   }
 
   /**
