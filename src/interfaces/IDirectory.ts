@@ -1,4 +1,4 @@
-import { IAtlasFileInfo } from "./types/IFileInfo";
+import { IAtlasFileInfo } from "./types/IAtlasFileInfo";
 import { IDirectoryInfo } from "./types/IDirectoryInfo";
 
 

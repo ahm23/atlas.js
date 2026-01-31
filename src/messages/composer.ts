@@ -9,22 +9,22 @@ export class MessageComposer {
    * Creates a properly formatted EncodeObject for file upload
    */
   static MsgPostFile(
+    fid: string,
     creator: string,
     merkleRoot: Uint8Array,
     fileSize: number,
     replicas: number = 3,
-    nonce: number,
-    subscription: string = ""
+    subscription: string = "sub_0"
   ): EncodeObject {
     // Use the MessageComposer from your protos
     return {
       typeUrl: MsgPostFile.typeUrl,
       value: MsgPostFile.fromPartial({
+        fid,
         creator,
         merkle: merkleRoot,
         fileSize: BigInt(fileSize),
         replicas: replicas,
-        nonce: nonce,
         subscription
       })
     };

@@ -65,10 +65,7 @@ export class UploadHelper {
   ): Promise<UploadResult> {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('fileId', fileId);
-    formData.append('fileName', file.name);
-    formData.append('fileSize', file.size.toString());
-    formData.append('fileType', file.type);
+    formData.append('fid', fileId);
 
     try {
       const response = await axios.post(`${hostname}/upload`, formData, {

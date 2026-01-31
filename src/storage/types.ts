@@ -1,6 +1,5 @@
 import { IAesBundle } from "@/interfaces/encryption";
 import { IFileMeta } from "@/interfaces/metadata";
-import { IAtlasFileInfo } from "@/interfaces/types/IFileInfo";
 import { aesBlobCrypt, generateAesKey } from "@/utils/crypto";
 import { DEFAULT_ENCYRPTION_CHUNK_SIZE } from "@/utils/defaults";
 import { buildFileMerkleTree } from "@/utils/merkletree";
@@ -39,6 +38,7 @@ export interface QueuedFile {
 
 export interface IFileNodeContents {
   fid: string
+  owner: string
   name: string
   size: number
   type: string

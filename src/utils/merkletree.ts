@@ -1,6 +1,7 @@
 import MerkleTree from "merkletreejs";
 import { h_blake3 } from "./hash";
 import { CancellationException } from "@/storage";
+import { bytesToHex } from "./converters";
 
 export async function buildFileMerkleTree(
   bytes: Blob,
@@ -30,6 +31,8 @@ export async function buildFileMerkleTree(
         if (signal.aborted) throw new CancellationException('Merkling cancelled')
         // Use subarray to avoid copying
         leaves.push(h_blake3(buffer.subarray(0, chunkSize)));
+        console.log("leaf:", bytesToHex(h_blake3(buffer.subarray(0, chunkSize))))
+        console.log("len:", buffer.subarray(0, chunkSize).length)
         // Remove processed chunk from buffer
         buffer = buffer.subarray(chunkSize);
 
@@ -42,7 +45,9 @@ export async function buildFileMerkleTree(
       if (done) {
         // Handle final partial chunk
         if (buffer.length > 0) {
-          leaves.push(buffer);
+          leaves.push(h_blake3(buffer));
+          console.log("leaf:", bytesToHex(h_blake3(buffer)))
+          console.log("len:", buffer.length)
         }
         break;
       }
@@ -50,5 +55,5 @@ export async function buildFileMerkleTree(
   } finally {
     reader.releaseLock();
   }
-  return new MerkleTree(leaves, hashFn);
+  return new MerkleTree(leaves, hashFn, { hashLeaves: true, duplicateOdd: true });
 }

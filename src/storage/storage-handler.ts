@@ -9,7 +9,7 @@ import {
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
-import { hashAndHex } from '@/utils/hash';
+import { buildFid, hashAndHex } from '@/utils/hash';
 import { IAesBundle } from '@/interfaces/encryption';
 import { aesBlobCrypt, generateAesKey } from '@/utils/crypto';
 import { nebulix, cosmos } from '@atlas/atlas.js-protos';
@@ -49,6 +49,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     super();
     this.client = client;
     this.address = client.getCurrentAddress();
+    this.client.on('walletConnected', () => this.address = this.client.getCurrentAddress())
   }
 
   declare on: (event: StorageEvents | string, listener: (...args: any[]) => void) => this;
@@ -74,17 +75,20 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Load directory metadata and children for a given path.
    * Directory info is accessible via the directory getter.
    */
-  public async loadDirectory(path: string, owner?: string) {
+  public async loadDirectory(path: string, owner: string = this.address) {
     // [PHASE 1]: directory loading assuming not encrypted folder and files
     // [PHASE 2]: encrypted folder and children compatibility
     // [PHASE 3]: paginated children request handling
-
-    const dir = (await this.client.query.nebulix.filetree.v1.fileNode({ path, owner: owner || this.address })).node
+    if (!owner) throw new Error("Unable to load directory. No owner specified and no wallet connected.")
+    const dir = (await this.client.query.nebulix.filetree.v1.fileNode({ path, owner })).node
     if (!dir) {
       // [TODO]: error handling
       throw new Error(`failed to get node ${path}, ${owner}`)
     }
+    console.debug("[ATL.JS] <loadDirectory> dir =", dir)
+
     const children = (await this.client.query.nebulix.filetree.v1.fileNodeChildren({ path, owner: owner || this.address })).nodes ?? []
+    console.debug("[ATL.JS] <loadDirectory> children =", dir)
     
     let newDir: IDirectory = { metadata: JSON.parse(dir.contents), path, files: [], subdirs: [], objects: [] };
     for (const node of children) {
@@ -174,14 +178,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       /// Phase 2: merkle root
       const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
       qfile.merkleRoot = tree.getRoot();
+      console.log("Merkle:", bytesToHex(qfile.merkleRoot))
+      console.log(tree)
 
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
         merkleRoot: bytesToHex(qfile.merkleRoot)
       });
 
       /// Phase 3: generate fid
-      qfile.fid = await hashAndHex(bytesToHex(qfile.merkleRoot) + this.client.getCurrentAddress() + qfile.nonce)
-
+      qfile.fid = await buildFid(qfile.merkleRoot, this.client.getCurrentAddress(), qfile.nonce)
+      console.log("FID:", qfile.fid)
+      console.log(this.client.getCurrentAddress())
       this.queuedFiles.set(fileKey, qfile);
 
       // update status to ready
@@ -255,6 +262,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
         const contents: IFileNodeContents = {
           fid: qfile.fid,
+          owner: creator,
           name: qfile.metadata.name,
           size: qfile.file.size,
           type: qfile.file.type,
@@ -267,11 +275,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
         msgs_postFile.push(
           MessageComposer.MsgPostFile(
+            qfile.fid,
             creator,
             qfile.merkleRoot,
             qfile.file.size,
             qfile.replicas,
-            qfile.nonce
           )
         )
         msgs_postNode.push(
@@ -290,7 +298,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       console.log(txResult)
 
       this.queuedFiles.forEach(async (qfile) => {
-        await UploadHelper.upload("https://api.oculux.io/upload", qfile.fid, qfile.file, null)
+        await UploadHelper.upload("https://api.oculux.io/api/v1", qfile.fid, qfile.file, null)
         this.queuedFiles.delete(qfile.file.name);
       })
 
