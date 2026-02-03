@@ -5,3 +5,4 @@ export * from './metadata'
 
 export * from './IDirectory'
 export * from './types/IAtlasFileInfo'
+export * from './types/IAtlasDriveInfo'

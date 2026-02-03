@@ -49,6 +49,15 @@ export interface IFileNodeContents {
   dateCreated: number
 }
 
+export interface IDirectoryContents {
+  name: string
+}
+
+export interface IDriveContents {
+  name: string
+  size: number
+}
+
 export interface UploadResult {
   fileId: string;
   transactionHash: string;

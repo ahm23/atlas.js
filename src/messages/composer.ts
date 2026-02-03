@@ -2,7 +2,7 @@
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { nebulix } from '@atlas/atlas.js-protos';
 import { MsgPostFile } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
-import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
+import { MsgDeleteNode, MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export class MessageComposer {
   /**
@@ -36,7 +36,7 @@ export class MessageComposer {
   static MsgPostNode(
     creator: string,
     path: string,
-    nodeType: 'file' | 'directory',
+    nodeType: 'file' | 'directory' | 'drive',
     contents: string
   ): EncodeObject {
     return {
@@ -49,6 +49,21 @@ export class MessageComposer {
       })
     };
   }
+
+  static MsgDeleteNode(
+    path: string,
+    creator: string,
+  ): EncodeObject {
+    // Use the MessageComposer from your protos
+    return {
+      typeUrl: MsgDeleteNode.typeUrl,
+      value: MsgDeleteNode.fromPartial({
+        path,
+        creator
+      })
+    };
+  }
+
 
   /**
    * Creates a cosmos bank send message

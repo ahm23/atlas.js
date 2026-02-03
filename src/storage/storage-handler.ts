@@ -6,6 +6,7 @@ import {
   IFileMetadata, 
   UploadResult,
   IFileNodeContents,
+  IDriveContents,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
@@ -19,7 +20,7 @@ import { toHex } from "@cosmjs/encoding";
 import { StargateClient } from '@cosmjs/stargate';
 import { QueryFileNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
 
-import { IDirectory, IFileMeta } from '@/interfaces';
+import { IDirectory, IFileMeta, IAtlasDriveInfo } from '@/interfaces';
 import MerkleTree from 'merkletreejs';
 import { buildFileMerkleTree } from '@/utils/merkletree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
@@ -35,13 +36,18 @@ export enum FileProcessingEvent {
   ERROR = 'file:error'
 }
 
-export type StorageEvents = FileProcessingEvent // | UploadEvent;
+export enum StorageHandlerEvent {
+  NAV_DIR = 'navigate-dir',
+}
+
+export type StorageEvents = FileProcessingEvent | StorageHandlerEvent;
 
 export class StorageHandler extends EventEmitter implements IStorageHandler {
   private client: AtlasClient;
   private queuedFiles: Map<string, QueuedFile> = new Map();
   private address;
 
+  private _drives: IAtlasDriveInfo[] = [];
   private _directory = {} as IDirectory;
   private _providers: Provider[] = [];
 
@@ -49,13 +55,15 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     super();
     this.client = client;
     this.address = client.getCurrentAddress();
-    this.client.on('walletConnected', () => this.address = this.client.getCurrentAddress())
+
+    this.selectAccount = this.selectAccount.bind(this)
+    this.client.on('walletConnected', this.selectAccount)
   }
 
   declare on: (event: StorageEvents | string, listener: (...args: any[]) => void) => this;
   declare emit: (event: StorageEvents | string, ...args: any[]) => boolean;
 
-  static async new(client: AtlasClient, initialPath: string = 'home'): Promise<StorageHandler> {
+  static async new(client: AtlasClient, initialPath: string = 's'): Promise<StorageHandler> {
     const handler = new StorageHandler(client);
     await handler.loadDirectory(initialPath);
     await handler.loadProviders();
@@ -80,6 +88,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     // [PHASE 2]: encrypted folder and children compatibility
     // [PHASE 3]: paginated children request handling
     if (!owner) throw new Error("Unable to load directory. No owner specified and no wallet connected.")
+    console.log(path, owner)
     const dir = (await this.client.query.nebulix.filetree.v1.fileNode({ path, owner })).node
     if (!dir) {
       // [TODO]: error handling
@@ -105,6 +114,53 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
 
     this._directory = newDir
+    this.emit(StorageHandlerEvent.NAV_DIR, newDir.path)
+  }
+
+  public async selectAccount(address: string) {
+    const drives: IAtlasDriveInfo[] = (await this.client.query.nebulix.filetree.v1.fileNodeChildren({ path: "", owner: address })).nodes
+      .filter(n => n.nodeType == "drive")
+      .map(d => JSON.parse(d.contents))
+    this.address = address
+    
+    if (!drives.length) {
+      console.log(address, this.client.getCurrentAddress())
+      if (address != this.client.getCurrentAddress()) {
+        throw new Error("This storage account does not have any files.")
+      }
+      else {
+        this._drives = [await this.createDrive("S", true)]
+        await this.loadDirectory("S")
+      }
+    }
+    else {
+      const defaultDrive = drives.find(d => d.isDefault) ?? drives[0]
+      this._drives = drives
+      await this.loadDirectory(defaultDrive.name)
+    }
+  }
+
+  public async createDrive(name: string, isDefault: boolean = false): Promise<IAtlasDriveInfo> {
+    this._validateAccount()
+
+    try {
+      const contents: IAtlasDriveInfo = {
+        name,
+        size: 0,
+        isDefault
+      }
+      const msg = MessageComposer.MsgPostNode(
+        this.address,
+        name,
+        "drive",
+        JSON.stringify(contents),
+      )
+      await this.client.signAndBroadcast([msg])
+      return contents
+    } catch (err) {
+      console.error(`Failed to create drive "${name}".\n${err}`)
+      throw err
+    }
   }
 
   /**
@@ -247,7 +303,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * @param dir
    * @returns 
    */
-  public async upload(dir?: string) {
+  public async upload(dir: string = this._directory.path) {
     const creator = this.client.getCurrentAddress()
     if (!creator) throw new Error(`Wallet not connected`);
     // [TODO]: better way of determining this ^
@@ -285,7 +341,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
         msgs_postNode.push(
           MessageComposer.MsgPostNode(
             creator,
-            `${dir ?? this._directory.path}/${qfile.fid}`,
+            `${dir}/${qfile.fid}`,
             "file",
             JSON.stringify(contents),
           )
@@ -306,6 +362,21 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     } catch (error) {
       throw new Error(`Failed to upload file: ${error}`);
     }
+  }
+
+  public async deleteFile(path: string) {
+    const msgs: any[] = []
+    
+    msgs.push(
+      MessageComposer.MsgDeleteNode(
+        path,
+        this.address,
+      )
+    )
+
+    const txResult = await this.client.signAndBroadcast(msgs)
+    console.log("TX Result:", txResult)
+    this.loadDirectory(this._directory.path)
   }
 
   /**
@@ -329,6 +400,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   clearQueuedFiles(): void {
     this.queuedFiles.clear();
+  }
+
+  private _validateAccount() {
+    if (!this.address) throw new Error("Cannot perform this operation without connecting a wallet.")
+    if (this.address != this.client.getCurrentAddress()) throw new Error("Cannot perform this operation on another account.")
   }
 }
 

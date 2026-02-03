@@ -88,8 +88,6 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
         await this.initialize();
       }
       
-      this.emit('walletConnected', connection);
-
       return connection;
     } catch (error) {
       this.emit('error', error);
@@ -234,7 +232,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   private setupEventForwarding(): void {
     // Forward wallet manager events
     this.walletManager.on('connected', (connection) => {
-      this.emit('walletConnected', connection);
+      this.emit('walletConnected', connection.address);
     });
 
     this.walletManager.on('disconnected', () => {
