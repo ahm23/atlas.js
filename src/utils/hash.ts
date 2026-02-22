@@ -1,5 +1,7 @@
 import { bytesToHex, stringToUint8ArrayBuffer } from "./converters"
 import { blake3 } from '@noble/hashes/blake3.js'
+// @ts-ignore
+import { XXH3_128 } from 'xxh3-ts';
 
 export async function buildFid(merkle: Uint8Array, creator: string, nonce: number): Promise<string> {
   // Combine all data
@@ -28,3 +30,4 @@ export async function hashAndHex(input: string): Promise<string> {
 }
 
 export const h_blake3 = (bytes: Uint8Array) => blake3(bytes)
+export const h_xxh3 = (bytes: Uint8Array) => {console.warn(Buffer.from(bytes)); return XXH3_128(Buffer.from(bytes))}

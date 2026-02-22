@@ -1,7 +1,7 @@
 // src/messages/composer.ts
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { nebulix } from '@atlas/atlas.js-protos';
-import { MsgPostFile } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
+import { MsgPostFile, MsgDeleteFile } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
 import { MsgDeleteNode, MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export class MessageComposer {
@@ -26,6 +26,20 @@ export class MessageComposer {
         fileSize: BigInt(fileSize),
         replicas: replicas,
         subscription
+      })
+    };
+  }
+
+  static MsgDeleteFile(
+    creator: string,
+    fid: string
+  ): EncodeObject {
+    // Use the MessageComposer from your protos
+    return {
+      typeUrl: MsgDeleteFile.typeUrl,
+      value: MsgDeleteFile.fromPartial({
+        creator,
+        fileId: fid
       })
     };
   }

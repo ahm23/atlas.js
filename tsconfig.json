@@ -1,11 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "es2020",
     "useDefineForClassFields": true,
-    "module": "ESNext",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "es2020",
+    "lib": ["es2020", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
     "allowJs": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -38,9 +39,12 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.d.ts"
-, "src/storage/test-encoding.bak"  ],
+  , "src/storage/test-encoding.bak"  ],
   "exclude": [
     "node_modules",
+    "**/node_modules/**",
+    "dist",
+    "build",
     "tests/**/*.ts"
   ]
 }

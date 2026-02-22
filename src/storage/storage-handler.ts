@@ -364,13 +364,22 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
   }
 
-  public async deleteFile(path: string) {
+  public async deleteFile(fid: string, path?: string) {
     const msgs: any[] = []
     
+    if (path) {
+      msgs.push(
+        MessageComposer.MsgDeleteNode(
+          path,
+          this.address,
+        )
+      )
+    }
+    
     msgs.push(
-      MessageComposer.MsgDeleteNode(
-        path,
+      MessageComposer.MsgDeleteFile(
         this.address,
+        fid
       )
     )
 

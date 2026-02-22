@@ -1,5 +1,5 @@
 import MerkleTree from "merkletreejs";
-import { h_blake3 } from "./hash";
+import { h_blake3, h_xxh3 } from "./hash";
 import { CancellationException } from "@/storage";
 import { bytesToHex } from "./converters";
 
@@ -55,5 +55,5 @@ export async function buildFileMerkleTree(
   } finally {
     reader.releaseLock();
   }
-  return new MerkleTree(leaves, hashFn, { hashLeaves: true, duplicateOdd: true });
+  return new MerkleTree(leaves, h_xxh3, { hashLeaves: true, duplicateOdd: true });
 }

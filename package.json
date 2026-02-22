@@ -19,7 +19,8 @@
     }
   },
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
@@ -34,7 +35,7 @@
     "vite-tsconfig-paths": "^4.2.1"
   },
   "dependencies": {
-    "@atlas/atlas.js-protos": "file:atlas-atlas.js-protos-0.0.7.tgz",
+    "@atlas/atlas.js-protos": "file:atlas-atlas.js-protos-0.0.8.tgz",
     "@cosmjs/encoding": "^0.38.1",
     "@cosmjs/proto-signing": "^0.38.1",
     "@cosmjs/stargate": "^0.38.1",
@@ -43,6 +44,7 @@
     "@noble/hashes": "^1.8.0",
     "axios": "^1.13.3",
     "merkletreejs": "^0.6.0",
-    "treeify": "^1.1.0"
+    "treeify": "^1.1.0",
+    "xxh3-ts": "^2.0.1"
   }
 }
