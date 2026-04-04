@@ -159,6 +159,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.emit(StorageHandlerEvent.NAV_DIR, newDir.path)
   }
 
+  public async reloadDirectory() {
+    await this.loadDirectory(this.directory.path)
+  }
+
   public async selectAccount(address: string): Promise<boolean> {
     this.address = address
     if (!await this.loadSubscription()) {
