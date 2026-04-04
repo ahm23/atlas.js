@@ -31,7 +31,6 @@ import { MessageComposer } from '@/messages/composer';
 import { UploadHelper } from './upload-helper';
 import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/subscription';
 import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
-import { File } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/file';
 import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export enum FileProcessingEvent {
@@ -376,7 +375,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
           lastModified: qfile.file.lastModified,
 
           merkleRoot: bytesToHex(qfile.merkleRoot),
-          lastUpdated: now,
+          dateUpdated: now,
           dateCreated: now,
         }
 
