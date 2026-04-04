@@ -7,4 +7,8 @@ export interface IStorageHandler {
   
   // upload queued files
   // upload(): Promise<void>
+  get subscriptionId(): string
+  get subscriptionStatus(): string
+  get storageUsed(): number
+  get storageTotal(): number
 }

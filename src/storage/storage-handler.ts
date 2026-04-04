@@ -7,6 +7,7 @@ import {
   UploadResult,
   IFileNodeContents,
   IDriveContents,
+  IDirectoryNodeContents,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
@@ -28,6 +29,10 @@ import EventEmitter from 'events';
 import { CancellationException, FileNotInQueue } from './exceptions';
 import { MessageComposer } from '@/messages/composer';
 import { UploadHelper } from './upload-helper';
+import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/subscription';
+import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
+import { File } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/file';
+import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -38,6 +43,8 @@ export enum FileProcessingEvent {
 
 export enum StorageHandlerEvent {
   NAV_DIR = 'navigate-dir',
+  NEW_SUB = 'subscription-loaded',
+  NO_SUB = 'no-subscription'
 }
 
 export type StorageEvents = FileProcessingEvent | StorageHandlerEvent;
@@ -46,6 +53,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   private client: AtlasClient;
   private queuedFiles: Map<string, QueuedFile> = new Map();
   private address;
+  private _activeSubscription: StorageSubscription | undefined
 
   private _drives: IAtlasDriveInfo[] = [];
   private _directory = {} as IDirectory;
@@ -64,19 +72,52 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   declare emit: (event: StorageEvents | string, ...args: any[]) => boolean;
 
   static async new(client: AtlasClient, initialPath: string = 's'): Promise<StorageHandler> {
-    const handler = new StorageHandler(client);
-    await handler.loadDirectory(initialPath);
-    await handler.loadProviders();
-    return handler;
+    const handler = new StorageHandler(client)
+    await handler.loadSubscription()
+    await handler.loadDirectory(initialPath)
+    await handler.loadProviders()
+    return handler
   }
 
   // Getters
-  get directory(): IDirectory {
+  public get ready(): boolean {
+    return this._activeSubscription != undefined
+  }
+
+  public get directory(): IDirectory {
     return this._directory;
   }
 
-  get providers(): Provider[] {
+  public get subscriptionId(): string {
+    return this._activeSubscription?.id
+  }
+
+  public get subscriptionStatus(): string {
+    return this._activeSubscription?.status
+  }
+
+  public get storageUsed(): number {
+    return Number(this._activeSubscription?.spaceUsed)
+  }
+
+  public get storageTotal(): number {
+    return Number(this._activeSubscription?.spaceAvailable)
+  }
+
+  public get providers(): Provider[] {
     return this._providers;
+  }
+
+  public async loadSubscription(id?: string): Promise<boolean> {
+    try {
+      this._activeSubscription = await this.client.query.subscription(this.address, id)
+      this.emit(StorageHandlerEvent.NEW_SUB)
+      console.debug("[StorageHandler] Active Subscription:", this._activeSubscription)
+      return true;
+    } catch {
+      this.emit(StorageHandlerEvent.NO_SUB)
+      return false;
+    }
   }
 
   /**
@@ -89,14 +130,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     // [PHASE 3]: paginated children request handling
     if (!owner) throw new Error("Unable to load directory. No owner specified and no wallet connected.")
     console.log(path, owner)
-    const dir = (await this.client.query.nebulix.filetree.v1.fileNode({ path, owner })).node
+    const dir = (await this.client.queryClient.nebulix.filetree.v1.fileNode({ path, owner })).node
     if (!dir) {
       // [TODO]: error handling
       throw new Error(`failed to get node ${path}, ${owner}`)
     }
     console.debug("[ATL.JS] <loadDirectory> dir =", dir)
 
-    const children = (await this.client.query.nebulix.filetree.v1.fileNodeChildren({ path, owner: owner || this.address })).nodes ?? []
+    const children = (await this.client.queryClient.nebulix.filetree.v1.fileNodeChildren({ path, owner: owner || this.address })).nodes ?? []
     console.debug("[ATL.JS] <loadDirectory> children =", dir)
     
     let newDir: IDirectory = { metadata: JSON.parse(dir.contents), path, files: [], subdirs: [], objects: [] };
@@ -114,14 +155,19 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
 
     this._directory = newDir
+    console.log("PATH:", newDir)
     this.emit(StorageHandlerEvent.NAV_DIR, newDir.path)
   }
 
-  public async selectAccount(address: string) {
-    const drives: IAtlasDriveInfo[] = (await this.client.query.nebulix.filetree.v1.fileNodeChildren({ path: "", owner: address })).nodes
+  public async selectAccount(address: string): Promise<boolean> {
+    this.address = address
+    if (!await this.loadSubscription()) {
+      return false;
+    }
+
+    const drives: IAtlasDriveInfo[] = (await this.client.queryClient.nebulix.filetree.v1.fileNodeChildren({ path: "", owner: address })).nodes
       .filter(n => n.nodeType == "drive")
       .map(d => JSON.parse(d.contents))
-    this.address = address
     
     if (!drives.length) {
       console.log(address, this.client.getCurrentAddress())
@@ -138,6 +184,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       this._drives = drives
       await this.loadDirectory(defaultDrive.name)
     }
+    return true;
   }
 
   public async createDrive(name: string, isDefault: boolean = false): Promise<IAtlasDriveInfo> {
@@ -168,7 +215,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   public async loadProviders() {
     try {
-      this._providers = (await this.client.query.nebulix.storage.v1.providers()).providers
+      this._providers = (await this.client.queryClient.nebulix.storage.v1.providers()).providers
     } catch (err) {
       // [TODO]: proper error handling
       // this is useless.. for now
@@ -414,6 +461,56 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   private _validateAccount() {
     if (!this.address) throw new Error("Cannot perform this operation without connecting a wallet.")
     if (this.address != this.client.getCurrentAddress()) throw new Error("Cannot perform this operation on another account.")
+  }
+
+  /* ==== folder management ==== */
+  async createFolder(name: string): Promise<string> {
+    const dir: IDirectoryNodeContents = {
+      name,
+      fileCount: 0,
+      dateCreated: Date.now()
+    }
+    const msgs: EncodeObject[] = [
+      {
+        typeUrl: MsgPostNode.typeUrl,
+        value: MsgPostNode.fromPartial({
+          creator: this.address,
+          path: this.directory.path + '/' + name,
+          nodeType: "directory",
+          contents: JSON.stringify(dir) 
+        })
+      }
+    ]
+    const txResult = await this.client.signAndBroadcast(msgs)
+    console.debug("[ATLAS.JS] Tx Result:", txResult)
+    return txResult.hash
+  }
+
+  /* ==== subscription management ==== */
+  async purchaseSubscription(bytes: number, days: number, address?: string): Promise<string> {
+    address = address ?? this.address
+    if (bytes < 1024**3) {
+      throw Error("cannot do bytes less than 1GB")
+    }
+    if (days < 1) {
+      throw Error("cannot do less than 1 day")
+    }
+
+    const msgs: EncodeObject[] = [
+      {
+        typeUrl: MsgBuyStorage.typeUrl,
+        value: MsgBuyStorage.fromPartial({
+          creator: this.address,
+          receiver: address,
+          duration: BigInt(days),
+          bytes: BigInt(bytes),
+          isDefault: false,
+        })
+      }
+    ]
+    const txResult = await this.client.signAndBroadcast(msgs)
+    console.debug("[ATLAS.JS] Tx Result:", txResult)
+    return txResult.hash
   }
 }
 

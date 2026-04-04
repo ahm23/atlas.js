@@ -214,17 +214,17 @@ export abstract class BaseWallet {
       console.log(offlineSigner)
       console.log(this.signingClient)
 
-      const sendAmount = { denom: "uatl", amount: "100000" };
-      try {
-        const resp = await this.signingClient.sendTokens(
-          "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
-          "atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x",
-          [sendAmount],
-          "auto"
-        )
-      } catch (err: any) {
-        console.error("err!", err)
-      }
+      // const sendAmount = { denom: "uatl", amount: "100000" };
+      // try {
+      //   const resp = await this.signingClient.sendTokens(
+      //     "atl1wwrfl6n5qfrhldpjngp7stshnd9tgcv0u2qzvu",
+      //     "atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x",
+      //     [sendAmount],
+      //     "auto"
+      //   )
+      // } catch (err: any) {
+      //   console.error("err!", err)
+      // }
 
 
       this.offlineSigner = offlineSigner;

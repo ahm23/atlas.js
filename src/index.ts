@@ -21,7 +21,8 @@ export type {
   IAtlasClient,
   IStorageHandler,
   
-  IAtlasFileInfo
+  IAtlasFileInfo,
+  IAtlasDirectoryInfo
 } from './interfaces'
 
 

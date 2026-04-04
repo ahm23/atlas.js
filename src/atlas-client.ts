@@ -6,6 +6,7 @@ import { QueryClient } from './wallets/types'
 import { IStorageHandler } from './interfaces';
 import { IAtlasClient } from './interfaces/classes/IAtlasClient';
 import { IndexedTx } from '@cosmjs/stargate';
+import { QueryHelper } from './query-helper';
 
 export interface AtlasConfig {
   chainId: string;
@@ -16,11 +17,13 @@ export interface AtlasConfig {
 }
 
 export class AtlasClient extends EventEmitter implements IAtlasClient {
-  private config: AtlasConfig;
-  private walletManager: WalletManager;
-  private isInitialized: boolean = false;
+  private _config: AtlasConfig;
+  private _walletManager: WalletManager;
+  private _isInitialized: boolean = false;
 
-  public query: QueryClient
+  private _queryHelper: QueryHelper
+  public queryClient: QueryClient
+  
 
   constructor(config: AtlasConfig) {
     super();
@@ -33,10 +36,10 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
       throw new Error('rpcEndpoint is required in config');
     }
 
-    this.config = config;
+    this._config = config;
     
     // Initialize wallet manager with minimal config
-    this.walletManager = new WalletManager({
+    this._walletManager = new WalletManager({
       chainId: config.chainId,
       rpcEndpoint: config.rpcEndpoint,
       restEndpoint: config.restEndpoint,
@@ -49,17 +52,32 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
     this.initialize();
   }
 
+  public get query(): QueryHelper
+  {
+    return this._queryHelper
+  }
+
+  public get isConnected(): boolean
+  {
+      return this._walletManager.isConnected();
+  }
+  public get isInitialized(): boolean
+  {
+      return this._isInitialized;
+  }
+
   /**
    * Initialize the client (just sets up event listeners for now)
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized) return;
+    if (this._isInitialized) return;
 
     try {
       // For now, just mark as initialized
-      this.isInitialized = true;
+      this._isInitialized = true;
 
-      this.query = await nebulix.ClientFactory.createRPCQueryClient({rpcEndpoint: this.config.rpcEndpoint})
+      this.queryClient = await nebulix.ClientFactory.createRPCQueryClient({rpcEndpoint: this._config.rpcEndpoint})
+      this._queryHelper = new QueryHelper(this.queryClient)
 
       this.emit('initialized', {
         client: this,
@@ -81,10 +99,10 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
     options?: any
   ): Promise<WalletConnection> {
     try {
-      const connection = await this.walletManager.connect(type, options);
+      const connection = await this._walletManager.connect(type, options);
       
       // Ensure client is initialized
-      if (!this.isInitialized) {
+      if (!this._isInitialized) {
         await this.initialize();
       }
       
@@ -97,7 +115,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
   async disconnectWallet(): Promise<void> {
     try {
-      await this.walletManager.disconnect();
+      await this._walletManager.disconnect();
       this.emit('walletDisconnected');
     } catch (error) {
       this.emit('error', error);
@@ -117,7 +135,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
     }
 
     try {
-      const result = await this.walletManager.signArbitrary(message);
+      const result = await this._walletManager.signArbitrary(message);
       
       this.emit('messageSigned', {
         message,
@@ -145,7 +163,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
     try {
       console.log("Messages:", messages)
-      const txHash = await this.walletManager.signAndBroadcast(messages, { memo });
+      const txHash = await this._walletManager.signAndBroadcast(messages, { memo });
       const result = await this.waitForTransaction(txHash)
       return result
     } catch (error) {
@@ -165,7 +183,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
       try {
         // Query transaction using the hash
         console.log("TX HASH:", txHash)
-        const txResponse = await this.walletManager.getQueryClient().getTx(txHash);
+        const txResponse = await this._walletManager.getQueryClient().getTx(txHash);
         
         // Check if transaction has been included in a block
         if (txResponse) {
@@ -201,21 +219,21 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
    * Utility Methods
    */
   getCurrentAddress(): string | null {
-    const connection = this.walletManager.getCurrentConnection();
+    const connection = this._walletManager.getCurrentConnection();
     return connection?.address || null;
   }
 
   isWalletConnected(): boolean {
-    return this.walletManager.isConnected();
+    return this._walletManager.isConnected();
   }
 
   getWalletType(): WalletType | null {
-    const connection = this.walletManager.getCurrentConnection();
+    const connection = this._walletManager.getCurrentConnection();
     return connection?.walletType || null;
   }
 
   getChainId(): string {
-    return this.config.chainId;
+    return this._config.chainId;
   }
 
   /**
@@ -231,23 +249,23 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
   private setupEventForwarding(): void {
     // Forward wallet manager events
-    this.walletManager.on('connected', (connection) => {
+    this._walletManager.on('connected', (connection) => {
       this.emit('walletConnected', connection.address);
     });
 
-    this.walletManager.on('disconnected', () => {
+    this._walletManager.on('disconnected', () => {
       this.emit('walletDisconnected');
     });
 
-    this.walletManager.on('clientsInitialized', (clients) => {
+    this._walletManager.on('clientsInitialized', (clients) => {
       this.emit('clientsInitialized', clients);
     });
 
-    this.walletManager.on('clientsDestroyed', () => {
+    this._walletManager.on('clientsDestroyed', () => {
       this.emit('clientsDestroyed');
     });
 
-    this.walletManager.on('error', (error) => {
+    this._walletManager.on('error', (error) => {
       this.emit('walletError', error);
     });
   }
@@ -258,7 +276,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   async dispose(): Promise<void> {
     try {
       await this.disconnectWallet();
-      this.isInitialized = false;
+      this._isInitialized = false;
       this.removeAllListeners();
       this.emit('destroyed');
     } catch (error) {

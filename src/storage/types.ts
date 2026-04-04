@@ -45,17 +45,20 @@ export interface IFileNodeContents {
   lastModified: number
 
   merkleRoot: string
-  lastUpdated: number
+  dateUpdated: number
   dateCreated: number
 }
 
-export interface IDirectoryContents {
+export interface IDirectoryNodeContents {
   name: string
+  fileCount: number
+  dateCreated: number
 }
 
 export interface IDriveContents {
   name: string
   size: number
+  dateCreated: number
 }
 
 export interface UploadResult {
