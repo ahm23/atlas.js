@@ -43,6 +43,7 @@ export interface IFileNodeContents {
   size: number
   type: string
   lastModified: number
+  encrypted: boolean
 
   merkleRoot: string
   dateUpdated: number

@@ -128,7 +128,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     // [PHASE 2]: encrypted folder and children compatibility
     // [PHASE 3]: paginated children request handling
     if (!owner) throw new Error("Unable to load directory. No owner specified and no wallet connected.")
-    console.log(path, owner)
     const dir = (await this.client.queryClient.nebulix.filetree.v1.fileNode({ path, owner })).node
     if (!dir) {
       // [TODO]: error handling
@@ -173,7 +172,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       .map(d => JSON.parse(d.contents))
     
     if (!drives.length) {
-      console.log(address, this.client.getCurrentAddress())
       if (address != this.client.getCurrentAddress()) {
         throw new Error("This storage account does not have any files.")
       }
@@ -284,8 +282,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       /// Phase 2: merkle root
       const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
       qfile.merkleRoot = tree.getRoot();
-      console.log("Merkle:", bytesToHex(qfile.merkleRoot))
-      console.log(tree)
+      console.debug("MROOT:", bytesToHex(qfile.merkleRoot))
+      // console.log(tree)
 
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {
         merkleRoot: bytesToHex(qfile.merkleRoot)
@@ -294,7 +292,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       /// Phase 3: generate fid
       qfile.fid = await buildFid(qfile.merkleRoot, this.client.getCurrentAddress(), qfile.nonce)
       console.log("FID:", qfile.fid)
-      console.log(this.client.getCurrentAddress())
       this.queuedFiles.set(fileKey, qfile);
 
       // update status to ready
@@ -373,6 +370,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
           size: qfile.file.size,
           type: qfile.file.type,
           lastModified: qfile.file.lastModified,
+          encrypted: qfile.encryption ? true : false,
 
           merkleRoot: bytesToHex(qfile.merkleRoot),
           dateUpdated: now,
@@ -396,12 +394,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
             JSON.stringify(contents),
           )
         )
-
-        console.log(qfile, msgs_postFile)
       })
 
       const txResult = await this.client.signAndBroadcast([...msgs_postFile, ...msgs_postNode])
-      console.log(txResult)
+      // console.log(txResult)
 
       this.queuedFiles.forEach(async (qfile) => {
         await UploadHelper.upload("https://api.oculux.io/api/v1", qfile.fid, qfile.file, null)

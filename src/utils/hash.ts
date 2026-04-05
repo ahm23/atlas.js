@@ -30,4 +30,4 @@ export async function hashAndHex(input: string): Promise<string> {
 }
 
 export const h_blake3 = (bytes: Uint8Array) => blake3(bytes)
-export const h_xxh3 = (bytes: Uint8Array) => {console.warn(Buffer.from(bytes)); return XXH3_128(Buffer.from(bytes))}
+export const h_xxh3 = (bytes: Uint8Array) => XXH3_128(Buffer.from(bytes))
