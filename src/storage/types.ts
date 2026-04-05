@@ -52,7 +52,7 @@ export interface IFileNodeContents {
 
 export interface IDirectoryNodeContents {
   name: string
-  fileCount: number
+  itemCount: number
   dateCreated: number
 }
 

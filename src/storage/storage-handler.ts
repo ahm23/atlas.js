@@ -357,12 +357,13 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const now = Date.now();
 
     if (!this.queuedFiles.size) throw new Error("Cannot upload! Queue is empty.")
-          
-    try {  
+
+    try {
       const msgs_postFile: any = []
       const msgs_postNode: any = []
-      this.queuedFiles.forEach(async (qfile) => {
+      msgs_postNode.push(await this._incrementDirectoryItemCount(dir, this.queuedFiles.size))
 
+      this.queuedFiles.forEach(async (qfile) => {
         const contents: IFileNodeContents = {
           fid: qfile.fid,
           owner: creator,
@@ -409,30 +410,65 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       throw new Error(`Failed to upload file: ${error}`);
     }
   }
+  
+  /*-------------------------------*/
+  /* ===== DELETE OPERATIONS ===== */
+  /*-------------------------------*/
+  public async deleteFile(fid: string, basepath: string = this.directory.path): Promise<string> {
+    const msgs: EncodeObject[] = [
+      await this._incrementDirectoryItemCount(basepath, -1),
+      ...this._genDeleteFileMessage(fid, basepath)
+    ]
+    const txResult = await this.client.signAndBroadcast(msgs)
 
-  public async deleteFile(fid: string, path?: string) {
-    const msgs: any[] = []
-    
-    if (path) {
-      msgs.push(
-        MessageComposer.MsgDeleteNode(
-          path,
-          this.address,
-        )
-      )
-    }
-    
-    msgs.push(
+    this.reloadDirectory()
+    return txResult.hash
+  }
+
+  public async deleteFiles(fids: string[], basepath: string = this.directory.path): Promise<string> {
+    const msgs: EncodeObject[] = [
+      await this._incrementDirectoryItemCount(basepath, -1),
+      ...fids.reduce((arr, fid) => {
+        arr.push(...this._genDeleteFileMessage(fid, basepath))
+        return arr
+      }, [])
+    ]
+    const txResult = await this.client.signAndBroadcast(msgs)
+
+    this.reloadDirectory()
+    return txResult.hash
+  }
+
+  private _genDeleteFileMessage(fid: string, basepath: string): EncodeObject[] {
+    return [
+      MessageComposer.MsgDeleteNode(
+        this.address,
+        basepath + '/' + fid
+      ),
       MessageComposer.MsgDeleteFile(
         this.address,
         fid
       )
-    )
-
-    const txResult = await this.client.signAndBroadcast(msgs)
-    console.log("TX Result:", txResult)
-    this.loadDirectory(this._directory.path)
+    ]
   }
+
+  public async deleteFolder(path: string = this.directory.path): Promise<string> {
+    const msgs = [
+      MessageComposer.MsgDeleteNode(
+        this.address,
+        path
+      ),
+    ]
+    const txResult = await this.client.signAndBroadcast(msgs)
+
+    if (path == this.directory.path) {
+      this.loadDirectory(path.substring(0, path.lastIndexOf('/')))
+    } else {
+      this.reloadDirectory()
+    }
+    return txResult.hash
+  }
+
 
   /**
    * List all queued files
@@ -463,26 +499,18 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   }
 
   /* ==== folder management ==== */
-  async createFolder(name: string): Promise<string> {
-    const dir: IDirectoryNodeContents = {
+  async createDirectory(name: string, basepath: string = this._directory.path): Promise<string> {
+    const contents: IDirectoryNodeContents = {
       name,
-      fileCount: 0,
+      itemCount: 0,
       dateCreated: Date.now()
     }
+
     const msgs: EncodeObject[] = [
-      {
-        typeUrl: MsgPostNode.typeUrl,
-        value: MsgPostNode.fromPartial({
-          creator: this.address,
-          path: this.directory.path + '/' + name,
-          nodeType: "directory",
-          contents: JSON.stringify(dir) 
-        })
-      }
+      await this._incrementDirectoryItemCount(basepath, 1),
+      MessageComposer.MsgPostNode(this.address, this.directory.path + '/' + name, "directory", JSON.stringify(contents))
     ]
-    const txResult = await this.client.signAndBroadcast(msgs)
-    console.debug("[ATLAS.JS] Tx Result:", txResult)
-    return txResult.hash
+    return (await this.client.signAndBroadcast(msgs)).hash
   }
 
   /* ==== subscription management ==== */
@@ -510,6 +538,20 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const txResult = await this.client.signAndBroadcast(msgs)
     console.debug("[ATLAS.JS] Tx Result:", txResult)
     return txResult.hash
+  }
+
+
+  private async _incrementDirectoryItemCount(path: string, inc: number) {
+    const folderNode = await this.client.query.fileNode(path, this.address)
+    const folderContents: IDirectoryNodeContents = JSON.parse(folderNode.contents)
+    folderContents.itemCount += inc
+
+    return MessageComposer.MsgPostNode(
+      this.address,
+      `${path}`,
+      folderNode.nodeType,
+      JSON.stringify(folderContents),
+    )
   }
 }
 

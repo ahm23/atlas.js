@@ -47,12 +47,7 @@ export class MessageComposer {
   /**
    * Creates a file tree node message
    */
-  static MsgPostNode(
-    creator: string,
-    path: string,
-    nodeType: 'file' | 'directory' | 'drive',
-    contents: string
-  ): EncodeObject {
+  static MsgPostNode(creator: string, path: string, nodeType: string, contents: string): EncodeObject {
     return {
       typeUrl: MsgPostNode.typeUrl,
       value: MsgPostNode.fromPartial({
@@ -64,11 +59,7 @@ export class MessageComposer {
     };
   }
 
-  static MsgDeleteNode(
-    path: string,
-    creator: string,
-  ): EncodeObject {
-    // Use the MessageComposer from your protos
+  static MsgDeleteNode(creator: string, path: string): EncodeObject {
     return {
       typeUrl: MsgDeleteNode.typeUrl,
       value: MsgDeleteNode.fromPartial({
@@ -77,7 +68,6 @@ export class MessageComposer {
       })
     };
   }
-
 
   /**
    * Creates a cosmos bank send message
