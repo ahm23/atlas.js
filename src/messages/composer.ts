@@ -23,7 +23,7 @@ export class MessageComposer {
         fid,
         creator,
         merkle: merkleRoot,
-        fileSize: BigInt(fileSize),
+        fileSize: fileSize,
         replicas: replicas,
         subscription
       })
@@ -63,8 +63,8 @@ export class MessageComposer {
     return {
       typeUrl: MsgDeleteNode.typeUrl,
       value: MsgDeleteNode.fromPartial({
-        path,
-        creator
+        creator,
+        path: path.toLowerCase()
       })
     };
   }

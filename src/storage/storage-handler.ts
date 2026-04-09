@@ -529,8 +529,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
         value: MsgBuyStorage.fromPartial({
           creator: this.address,
           receiver: address,
-          duration: BigInt(days),
-          bytes: BigInt(bytes),
+          duration: days,
+          bytes: bytes,
           isDefault: false,
         })
       }

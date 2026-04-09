@@ -68,6 +68,7 @@ export default defineConfig({
         /* Atlas.js-protos */
         'grpc-web',
         'ts-proto',
+        // './binary',           // Catches the relative import
         /* Atlas.js */
         'ripemd160',
         'create-hash',

@@ -16,6 +16,10 @@ export interface AtlasConfig {
   gasAdjustment?: number;
 }
 
+export enum ClientEvent {
+  INITIALIZED = 'initialized',
+}
+
 export class AtlasClient extends EventEmitter implements IAtlasClient {
   private _config: AtlasConfig;
   private _walletManager: WalletManager;
@@ -24,6 +28,8 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   private _queryHelper: QueryHelper
   public queryClient: QueryClient
   
+  declare on: (event: ClientEvent | string, listener: (...args: any[]) => void) => this;
+  declare emit: (event: ClientEvent | string, ...args: any[]) => boolean;
 
   constructor(config: AtlasConfig) {
     super();
@@ -79,7 +85,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
       this.queryClient = await nebulix.ClientFactory.createRPCQueryClient({rpcEndpoint: this._config.rpcEndpoint})
       this._queryHelper = new QueryHelper(this.queryClient)
 
-      this.emit('initialized', {
+      this.emit(ClientEvent.INITIALIZED, {
         client: this,
         timestamp: Date.now()
       });

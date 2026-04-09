@@ -4,6 +4,7 @@ import { QueryClient } from "./wallets";
 import { StorageSubscription } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/subscription";
 import { File } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/file";
 import { FileNode } from "@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tree";
+import { FileStats, StorageStats } from "./types";
 
 
 export class QueryHelper implements IQueryHelper {
@@ -11,6 +12,14 @@ export class QueryHelper implements IQueryHelper {
   protected client: QueryClient
   constructor(client: QueryClient) {
     this.client = client
+  }
+  
+  async storageStats(): Promise<StorageStats> {
+    return await this.client.nebulix.storage.v1.storageStats()
+  }
+
+  async fileStats(): Promise<FileStats> {
+    return await this.client.nebulix.storage.v1.fileStats()
   }
 
   async subscription(address: string, id: string = "sub_0"): Promise<StorageSubscription> {

@@ -1,5 +1,5 @@
 // Export AtlasClient and related types
-export { AtlasClient } from './atlas-client';
+export { AtlasClient, ClientEvent } from './atlas-client';
 export type { AtlasConfig } from './atlas-client';
 
 // Export wallet-related functionality
@@ -22,8 +22,9 @@ export type {
   IStorageHandler,
   
   IAtlasFileInfo,
-  IAtlasDirectoryInfo
+  IAtlasDirectoryInfo,
 } from './interfaces'
 
 
+export * from './types'
 export * from './storage'
