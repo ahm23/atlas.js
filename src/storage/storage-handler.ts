@@ -55,7 +55,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   private _activeSubscription: StorageSubscription | undefined
 
   private _drives: IAtlasDriveInfo[] = [];
-  private _directory = {} as IDirectory;
+  private _directory = {path: "", files: [], subdirs: [], objects: []} as IDirectory;
   private _providers: Provider[] = [];
 
   constructor(client: AtlasClient) {
@@ -166,7 +166,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     if (!await this.loadSubscription()) {
       return false;
     }
-
+    console.log("address", address)
     const drives: IAtlasDriveInfo[] = (await this.client.queryClient.nebulix.filetree.v1.fileNodeChildren({ path: "", owner: address })).nodes
       .filter(n => n.nodeType == "drive")
       .map(d => JSON.parse(d.contents))
@@ -176,8 +176,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
         throw new Error("This storage account does not have any files.")
       }
       else {
-        this._drives = [await this.createDrive("S", true)]
-        await this.loadDirectory("S")
+        this._drives = [await this.createDrive("home", true)]
+        await this.loadDirectory("home")
       }
     }
     else {
@@ -281,8 +281,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
       /// Phase 2: merkle root
       const tree = await buildFileMerkleTree(qfile.file, qfile.abortController.signal);
-      qfile.merkleRoot = tree.getRoot();
+      qfile.merkleRoot = tree.root
       console.debug("MROOT:", bytesToHex(qfile.merkleRoot))
+      console.warn(tree.nodes)
       // console.log(tree)
 
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, {

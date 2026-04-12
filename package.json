@@ -42,6 +42,7 @@
     "@cosmjs/tendermint-rpc": "^0.38.1",
     "@cosmology/lcd": "^0.15.0",
     "@noble/hashes": "^1.8.0",
+    "@openzeppelin/merkle-tree": "^1.0.8",
     "axios": "^1.13.3",
     "merkletreejs": "^0.6.0",
     "treeify": "^1.1.0",

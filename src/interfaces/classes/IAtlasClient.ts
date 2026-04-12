@@ -20,7 +20,7 @@ export interface IAtlasClient {
   createStorageHandler(): StorageHandler
 
   getWalletType(): WalletType | null
-  getCurrentAddress(): string | null
+  getCurrentAddress(): string
   isWalletConnected(): boolean
 
   getChainId(): string

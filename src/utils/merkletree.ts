@@ -1,53 +1,43 @@
-import MerkleTree from "merkletreejs";
+import { MerkleTree, bytesToHex } from "./atlas-merkletree";
 import { h_blake3, h_xxh3 } from "./hash";
-import { CancellationException } from "@/storage";
-import { bytesToHex } from "./converters";
 
 export async function buildFileMerkleTree(
   bytes: Blob,
   signal: AbortSignal,
-  hashFn: any = h_blake3, 
   chunkSize: number = 1024
 ): Promise<MerkleTree> {
-  const leaves: Uint8Array[] = [];
+  const leafHashes: Uint8Array[] = [];
   const stream = bytes.stream();
   const reader = stream.getReader();
   let buffer = new Uint8Array(0);
-  
+
   try {
     while (true) {
       const { done, value } = await reader.read();
-      
+
       if (value) {
-        // Append new data to buffer
         const newBuffer = new Uint8Array(buffer.length + value.length);
         newBuffer.set(buffer);
         newBuffer.set(value, buffer.length);
         buffer = newBuffer;
       }
-      
-      // Process complete chunks from buffer
+
       while (buffer.length >= chunkSize) {
-        if (signal.aborted) throw new CancellationException('Merkling cancelled')
-        // Use subarray to avoid copying
-        leaves.push(h_blake3(buffer.subarray(0, chunkSize)));
-        // console.log("leaf:", bytesToHex(h_blake3(buffer.subarray(0, chunkSize))))
-        // console.log("len:", buffer.subarray(0, chunkSize).length)
-        // Remove processed chunk from buffer
+        if (signal.aborted) throw new Error("Cancelled");
+
+        const chunkHash = h_blake3(buffer.subarray(0, chunkSize));
+        leafHashes.push(chunkHash);
         buffer = buffer.subarray(chunkSize);
 
-        // yield to UI operations every 100 leaves, to be tuned
-        if (leaves.length % 100 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
+        if (leafHashes.length % 100 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
 
       if (done) {
-        // Handle final partial chunk
         if (buffer.length > 0) {
-          leaves.push(h_blake3(buffer));
-          // console.log("leaf:", bytesToHex(h_blake3(buffer)))
-          // console.log("len:", buffer.length)
+          const finalHash = h_blake3(buffer);
+          leafHashes.push(finalHash);
         }
         break;
       }
@@ -55,5 +45,9 @@ export async function buildFileMerkleTree(
   } finally {
     reader.releaseLock();
   }
-  return new MerkleTree(leaves, h_xxh3, { hashLeaves: true, duplicateOdd: true });
+
+  return new MerkleTree(leafHashes, h_xxh3, {
+    domainSeparation: false,
+    useXXH128: true,
+  });
 }

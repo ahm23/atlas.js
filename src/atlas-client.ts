@@ -224,9 +224,9 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   /**
    * Utility Methods
    */
-  getCurrentAddress(): string | null {
+  getCurrentAddress(): string {
     const connection = this._walletManager.getCurrentConnection();
-    return connection?.address || null;
+    return connection?.address || "";
   }
 
   isWalletConnected(): boolean {
