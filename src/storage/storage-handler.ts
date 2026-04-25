@@ -14,7 +14,7 @@ import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
 import { buildFid, hashAndHex } from '@/utils/hash';
 import { IAesBundle } from '@/interfaces/encryption';
-import { aesBlobCrypt, generateAesKey } from '@/utils/crypto';
+import { aesBlobCrypt, exportAesBundle, generateAesKey } from '@/utils/crypto';
 import { atlas, cosmos } from '@atlas/atlas.js-protos';
 import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
@@ -387,6 +387,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
           },
         }
 
+        const authorityBundle: AuthorityBundle = {
+          address: this.address,
+          secret: exportAesBundle('', qfile.encryption.aes)
+        }
+
         msgs_postFile.push(
           MessageComposer.MsgPostFile(
             qfile.fid,
@@ -402,6 +407,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
             `${dir}/${qfile.fid}`,
             "file",
             JSON.stringify(contents),
+
           )
         )
       })
