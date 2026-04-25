@@ -15,52 +15,67 @@ export interface IEncryptionOptions {
   aes?: IAesBundle;
 }
 
-export interface IFileMetadata {
-  name: string,
-  description?: string,
-  [k: string]: any
-}
-
-export interface QueuedFile {
+export interface IQueuedFile {
   file: File
-
   fid?: string
-  merkleRoot: Uint8Array
   nonce: number
-
+  merkleRoot: Uint8Array
   replicas: number
-  encryption?: IEncryptionOptions
 
-  metadata: IFileMetadata
+  encryption?: IEncryptionOptions
+  
   status: string
   abortController?: AbortController;
 }
 
-export interface IFileNodeContents {
-  fid: string
-  owner: string
-  name: string
-  size: number
-  type: string
-  lastModified: number
-  encrypted: boolean
+export interface IStagedFile extends IQueuedFile {
+  metadata: IFileMetadata
+}
 
-  merkleRoot: string
+
+// ==== NodeContents Interfaces ====================
+
+export interface INodeContents {
+  owner: string
+  path: string
   dateUpdated: number
   dateCreated: number
 }
 
-export interface IDirectoryNodeContents {
-  name: string
-  itemCount: number
-  dateCreated: number
+export interface IFileNodeContents extends INodeContents {
+  fid: string
+  merkleRoot: string
+  encrypted: boolean
+  meta: IFileMetadata
 }
 
-export interface IDriveContents {
+export interface IDirectoryNodeContents extends INodeContents {
   name: string
-  size: number
-  dateCreated: number
+  itemCount: number
 }
+
+export interface IDriveNodeContents extends INodeContents {
+  name: string
+}
+
+interface IFileMetadataBase {
+  name: string
+  type: string
+  size: number
+  lastModified: number
+}
+
+export interface IFileMetadata extends IFileMetadataBase {
+  [k: string]: any
+}
+
+export interface IFileMetadataInput {
+  name?: string
+  [k: string]: any
+}
+
+// ===============================================
+
 
 export interface UploadResult {
   fileId: string;

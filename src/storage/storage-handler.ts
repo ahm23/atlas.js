@@ -2,12 +2,13 @@ import { DEFAULT_ENCYRPTION_CHUNK_SIZE, DEFAULT_REPLICAS } from '@/utils/default
 import { 
   IEncryptionOptions,
   IFileUploadOptions, 
-  QueuedFile, 
+  IQueuedFile, 
   IFileMetadata, 
   UploadResult,
   IFileNodeContents,
-  IDriveContents,
+  IDriveNodeContents,
   IDirectoryNodeContents,
+  IStagedFile,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { bytesToHex, extractFileMetaData } from '@/utils/converters';
@@ -50,7 +51,9 @@ export type StorageEvents = FileProcessingEvent | StorageHandlerEvent;
 
 export class StorageHandler extends EventEmitter implements IStorageHandler {
   private client: AtlasClient;
-  private queuedFiles: Map<string, QueuedFile> = new Map();
+  private queuedFiles: Map<string, IQueuedFile> = new Map();
+  private stagedFiles: Map<string, IFileMetadata> = new Map();
+
   private address;
   private _activeSubscription: StorageSubscription | undefined
 
@@ -232,13 +235,12 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     options: IFileUploadOptions = {}
   ): Promise<void> {
     // add the file to the upload queue
-    const queuedFile: QueuedFile = {
+    const queuedFile: IQueuedFile = {
       file,
       merkleRoot: new Uint8Array(),
       nonce: Math.floor(Math.random() * 2_147_483_647),
       replicas: options.replicas || DEFAULT_REPLICAS,
       encryption: options.encrypt ? options.encryptOpts ?? {} : undefined,
-      metadata: { name: file.name.replace(/\.[^/.]+$/, "") },
       status: 'idle'
     };
     this.queuedFiles.set(file.name, queuedFile);
@@ -337,7 +339,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * @param fileKey - file identifier
    * @param status - new file status
    */
-  private updateQueuedFileStatus(fileKey: string, status: QueuedFile['status']): void {
+  private updateQueuedFileStatus(fileKey: string, status: IQueuedFile['status']): void {
     const queuedFile = this.queuedFiles.get(fileKey);
     if (!queuedFile) throw new FileNotInQueue(`File ${fileKey} not found in upload queue!`);
 
@@ -352,7 +354,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * @returns 
    */
   public async upload(dir: string = this._directory.path) {
-    const creator = this.client.getCurrentAddress()
+    const creator = this.address
     if (!creator) throw new Error(`Wallet not connected`);
     // [TODO]: better way of determining this ^
     const now = Date.now();
@@ -364,19 +366,25 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       const msgs_postNode: any = []
       msgs_postNode.push(await this._incrementDirectoryItemCount(dir, this.queuedFiles.size))
 
-      this.queuedFiles.forEach(async (qfile) => {
+      this.stagedFiles.forEach(async (meta, key) => {
+        const qfile = this.queuedFiles.get(key)
+
         const contents: IFileNodeContents = {
           fid: qfile.fid,
           owner: creator,
-          name: qfile.metadata.name,
-          size: qfile.file.size,
-          type: qfile.file.type,
-          lastModified: qfile.file.lastModified,
-          encrypted: qfile.encryption ? true : false,
-
+          path: this.directory.path + '/' + qfile.fid,
           merkleRoot: bytesToHex(qfile.merkleRoot),
           dateUpdated: now,
           dateCreated: now,
+          encrypted: qfile.encryption ? true : false,
+          // [TBD]: can I do ...meta after name and type, and it won't overwrite them if undefined?
+          meta: {
+            ...meta,
+            name: meta.name || qfile.file.name,
+            type: qfile.file.type,
+            size: qfile.file.size,
+            lastModified: qfile.file.lastModified,
+          },
         }
 
         msgs_postFile.push(
@@ -412,6 +420,48 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
   }
   
+  public async downloadFile(fid: string, basepath: string = this.directory.path): Promise<File> {
+    const nodeDetails = await this.client.query.fileNode(basepath + '/' + fid, this.address)
+    if (nodeDetails.nodeType != 'file') {
+      throw new Error("this is not a file...")
+    }
+
+    const nodeContents = JSON.parse(nodeDetails.contents) as IFileNodeContents
+    const fileDetails = await this.client.query.file(fid)
+
+    const raw = await this.download(fid, fileDetails.providers[0], nodeContents.meta.name, nodeContents.meta)
+
+    return raw
+  }
+
+
+  private async download(fid: string, provider: string, fileName: string, fileMeta: FilePropertyBag): Promise<File> {
+    try {
+      const url = `${provider}/download/${fid}`
+      const resp = await fetch(url, { method: 'GET' })
+      const contentLength = resp.headers.get('Content-Length')
+      if (resp.status !== 200) {
+        throw new Error(`Status Message: ${resp.statusText}`)
+      } else if (resp.body === null || !contentLength) {
+        throw new Error(`Invalid response body`)
+      } else {
+        const chunks: Uint8Array<ArrayBuffer>[] = []
+        const reader = resp.body.getReader()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) {
+            break
+          }
+          chunks.push(value)
+        }
+        return new File(chunks, fileName, fileMeta)
+      }
+    } catch (err) {
+      throw err
+    }
+  }
+
+
   /*-------------------------------*/
   /* ===== DELETE OPERATIONS ===== */
   /*-------------------------------*/
@@ -474,7 +524,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   /**
    * List all queued files
    */
-  listQueuedFiles(): QueuedFile[] {
+  listQueuedFiles(): IQueuedFile[] {
     return Array.from(this.queuedFiles.values());
   }
 
@@ -501,15 +551,20 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
   /* ==== folder management ==== */
   async createDirectory(name: string, basepath: string = this._directory.path): Promise<string> {
+    const creator = this.address
+    const now = Date.now();
     const contents: IDirectoryNodeContents = {
       name,
+      owner: creator,
+      path: this.directory.path + '/' + name,
       itemCount: 0,
-      dateCreated: Date.now()
+      dateUpdated: now,
+      dateCreated: now
     }
 
     const msgs: EncodeObject[] = [
       await this._incrementDirectoryItemCount(basepath, 1),
-      MessageComposer.MsgPostNode(this.address, this.directory.path + '/' + name, "directory", JSON.stringify(contents))
+      MessageComposer.MsgPostNode(creator, this.directory.path + '/' + name, "directory", JSON.stringify(contents))
     ]
     return (await this.client.signAndBroadcast(msgs)).hash
   }
