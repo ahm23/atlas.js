@@ -42,7 +42,7 @@ export interface INodeContents {
   dateCreated: number
 }
 
-export interface IFileNodeContents extends INodeContents {
+export interface ITreeNodeContents extends INodeContents {
   fid: string
   merkleRoot: string
   encrypted: boolean

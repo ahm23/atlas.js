@@ -1,6 +1,6 @@
-import { IDirectoryNodeContents, IFileNodeContents } from "@/storage/types";
+import { IDirectoryNodeContents, ITreeNodeContents } from "@/storage/types";
 
-export type IAtlasFileInfo = IFileNodeContents
+export type IAtlasFileInfo = ITreeNodeContents
 export type IAtlasDirectoryInfo = IDirectoryNodeContents
 
 export interface IDirectory {  

@@ -1,8 +1,8 @@
 // src/messages/composer.ts
 import { EncodeObject } from '@cosmjs/proto-signing';
-import { nebulix } from '@atlas/atlas.js-protos';
-import { MsgPostFile, MsgDeleteFile } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
-import { MsgDeleteNode, MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
+import { atlas } from '@atlas/atlas.js-protos';
+import { MsgPostFile, MsgDeleteFile } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/tx';
+import { MsgDeleteNode, MsgPostNode } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tx';
 
 export class MessageComposer {
   /**

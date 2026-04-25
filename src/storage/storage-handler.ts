@@ -5,7 +5,7 @@ import {
   IQueuedFile, 
   IFileMetadata, 
   UploadResult,
-  IFileNodeContents,
+  ITreeNodeContents,
   IDriveNodeContents,
   IDirectoryNodeContents,
   IStagedFile,
@@ -15,24 +15,24 @@ import { bytesToHex, extractFileMetaData } from '@/utils/converters';
 import { buildFid, hashAndHex } from '@/utils/hash';
 import { IAesBundle } from '@/interfaces/encryption';
 import { aesBlobCrypt, generateAesKey } from '@/utils/crypto';
-import { nebulix, cosmos } from '@atlas/atlas.js-protos';
+import { atlas, cosmos } from '@atlas/atlas.js-protos';
 import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { toHex } from "@cosmjs/encoding";
 import { StargateClient } from '@cosmjs/stargate';
-import { QueryFileNodeResponse } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/query';
+import { QueryTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/query';
 
 import { IDirectory, IFileMeta, IAtlasDriveInfo } from '@/interfaces';
 import MerkleTree from 'merkletreejs';
 import { buildFileMerkleTree } from '@/utils/merkletree';
-import { Provider } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/provider';
+import { Provider } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/provider';
 import EventEmitter from 'events';
 import { CancellationException, FileNotInQueue } from './exceptions';
 import { MessageComposer } from '@/messages/composer';
 import { UploadHelper } from './upload-helper';
-import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/subscription';
-import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/tx';
-import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tx';
+import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/subscription';
+import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/tx';
+import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tx';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -131,14 +131,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     // [PHASE 2]: encrypted folder and children compatibility
     // [PHASE 3]: paginated children request handling
     if (!owner) throw new Error("Unable to load directory. No owner specified and no wallet connected.")
-    const dir = (await this.client.queryClient.nebulix.filetree.v1.fileNode({ path, owner })).node
+    const dir = (await this.client.queryClient.atlas.filetree.v1.treeNode({ path, owner })).node
     if (!dir) {
       // [TODO]: error handling
       throw new Error(`failed to get node ${path}, ${owner}`)
     }
     console.debug("[ATL.JS] <loadDirectory> dir =", dir)
 
-    const children = (await this.client.queryClient.nebulix.filetree.v1.fileNodeChildren({ path, owner: owner || this.address })).nodes ?? []
+    const children = (await this.client.queryClient.atlas.filetree.v1.treeNodeChildren({ path, owner: owner || this.address })).nodes ?? []
     console.debug("[ATL.JS] <loadDirectory> children =", dir)
     
     let newDir: IDirectory = { metadata: JSON.parse(dir.contents), path, files: [], subdirs: [], objects: [] };
@@ -170,7 +170,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       return false;
     }
     console.log("address", address)
-    const drives: IAtlasDriveInfo[] = (await this.client.queryClient.nebulix.filetree.v1.fileNodeChildren({ path: "", owner: address })).nodes
+    const drives: IAtlasDriveInfo[] = (await this.client.queryClient.atlas.filetree.v1.treeNodeChildren({ path: "", owner: address })).nodes
       .filter(n => n.nodeType == "drive")
       .map(d => JSON.parse(d.contents))
     
@@ -219,7 +219,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   public async loadProviders() {
     try {
-      this._providers = (await this.client.queryClient.nebulix.storage.v1.providers()).providers
+      this._providers = (await this.client.queryClient.atlas.storage.v1.providers()).providers
     } catch (err) {
       // [TODO]: proper error handling
       // this is useless.. for now
@@ -369,7 +369,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       this.stagedFiles.forEach(async (meta, key) => {
         const qfile = this.queuedFiles.get(key)
 
-        const contents: IFileNodeContents = {
+        const contents: ITreeNodeContents = {
           fid: qfile.fid,
           owner: creator,
           path: this.directory.path + '/' + qfile.fid,
@@ -421,12 +421,12 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   }
   
   public async downloadFile(fid: string, basepath: string = this.directory.path): Promise<File> {
-    const nodeDetails = await this.client.query.fileNode(basepath + '/' + fid, this.address)
+    const nodeDetails = await this.client.query.treeNode(basepath + '/' + fid, this.address)
     if (nodeDetails.nodeType != 'file') {
       throw new Error("this is not a file...")
     }
 
-    const nodeContents = JSON.parse(nodeDetails.contents) as IFileNodeContents
+    const nodeContents = JSON.parse(nodeDetails.contents) as ITreeNodeContents
     const fileDetails = await this.client.query.file(fid)
 
     const raw = await this.download(fid, fileDetails.providers[0], nodeContents.meta.name, nodeContents.meta)
@@ -598,7 +598,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
 
   private async _incrementDirectoryItemCount(path: string, inc: number) {
-    const folderNode = await this.client.query.fileNode(path, this.address)
+    const folderNode = await this.client.query.treeNode(path, this.address)
     const folderContents: IDirectoryNodeContents = JSON.parse(folderNode.contents)
     folderContents.itemCount += inc
 

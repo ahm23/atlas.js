@@ -1,7 +1,7 @@
 import { WalletManager, WalletType, WalletConnection } from '@/wallets';
 import EventEmitter from 'events';
 import { StorageHandler } from './storage/storage-handler';
-import { nebulix } from '@atlas/atlas.js-protos';
+import { atlas } from '@atlas/atlas.js-protos';
 import { QueryClient } from './wallets/types'
 import { IStorageHandler } from './interfaces';
 import { IAtlasClient } from './interfaces/classes/IAtlasClient';
@@ -82,7 +82,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
       // For now, just mark as initialized
       this._isInitialized = true;
 
-      this.queryClient = await nebulix.ClientFactory.createRPCQueryClient({rpcEndpoint: this._config.rpcEndpoint})
+      this.queryClient = await atlas.ClientFactory.createRPCQueryClient({rpcEndpoint: this._config.rpcEndpoint})
       this._queryHelper = new QueryHelper(this.queryClient)
 
       this.emit(ClientEvent.INITIALIZED, {

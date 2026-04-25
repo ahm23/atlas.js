@@ -35,7 +35,7 @@
     "vite-tsconfig-paths": "^4.2.1"
   },
   "dependencies": {
-    "@atlas/atlas.js-protos": "file:atlas-atlas.js-protos-0.0.15.tgz",
+    "@atlas/atlas.js-protos": "file:atlas-atlas.js-protos-0.1.0.tgz",
     "@cosmjs/encoding": "^0.38.1",
     "@cosmjs/proto-signing": "^0.38.1",
     "@cosmjs/stargate": "^0.38.1",

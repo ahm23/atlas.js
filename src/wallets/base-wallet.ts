@@ -10,7 +10,7 @@ import { DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmj
 import { OfflineSigner as OfflineAminoSigner, Registry } from '@cosmjs/proto-signing';
 import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import { GasPrice } from '@cosmjs/stargate';
-import { nebulix, cosmos, GlobalDecoderRegistry } from '@atlas/atlas.js-protos'
+import { atlas, cosmos, GlobalDecoderRegistry } from '@atlas/atlas.js-protos'
 import { toBase64, toHex } from "@cosmjs/encoding";
 
 export abstract class BaseWallet {
@@ -169,8 +169,8 @@ export abstract class BaseWallet {
       for (const [typeUrl, decoder] of Object.entries(GlobalDecoderRegistry.registry)) {
         registry.register(typeUrl, decoder as any);  // 'as any' to satisfy types (TelescopeGeneratedCodec extends GeneratedType)
       }
-      // nebulix.storage.v1.load(registry)
-      // nebulix.filetree.v1.load(registry)
+      // atlas.storage.v1.load(registry)
+      // atlas.filetree.v1.load(registry)
 
       // this.signingClient = await nebu
 

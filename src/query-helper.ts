@@ -1,9 +1,9 @@
-import { QuerySubscriptionRequest } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/query";
+import { QuerySubscriptionRequest } from "@atlas/atlas.js-protos/dist/types/atlas/storage/v1/query";
 import { IQueryHelper } from "./interfaces/classes/IQueryHelper";
 import { QueryClient } from "./wallets";
-import { StorageSubscription } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/subscription";
-import { File } from "@atlas/atlas.js-protos/dist/types/nebulix/storage/v1/file";
-import { FileNode } from "@atlas/atlas.js-protos/dist/types/nebulix/filetree/v1/tree";
+import { StorageSubscription } from "@atlas/atlas.js-protos/dist/types/atlas/storage/v1/subscription";
+import { File } from "@atlas/atlas.js-protos/dist/types/atlas/storage/v1/file";
+import { TreeNode } from "@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tree";
 import { FileStats, StorageStats } from "./types";
 
 
@@ -15,15 +15,15 @@ export class QueryHelper implements IQueryHelper {
   }
   
   async storageStats(): Promise<StorageStats> {
-    return await this.client.nebulix.storage.v1.storageStats()
+    return await this.client.atlas.storage.v1.storageStats()
   }
 
   async fileStats(): Promise<FileStats> {
-    return await this.client.nebulix.storage.v1.fileStats()
+    return await this.client.atlas.storage.v1.fileStats()
   }
 
   async subscription(address: string, id: string = "sub_0"): Promise<StorageSubscription> {
-    const res = await this.client.nebulix.storage.v1.subscription({ 
+    const res = await this.client.atlas.storage.v1.subscription({ 
       subscriberAddress: address,
       subscriptionId: id
     })
@@ -32,7 +32,7 @@ export class QueryHelper implements IQueryHelper {
   }
 
   async subscriptions(address: string): Promise<StorageSubscription[]> {
-    const res = await this.client.nebulix.storage.v1.subscriptions({ 
+    const res = await this.client.atlas.storage.v1.subscriptions({ 
       subscriberAddress: address
     })
 
@@ -40,15 +40,15 @@ export class QueryHelper implements IQueryHelper {
   }
 
   async file(fid: string): Promise<File> {
-    const res = await this.client.nebulix.storage.v1.file({ 
+    const res = await this.client.atlas.storage.v1.file({ 
       fid
     })
 
     return res.file
   }
 
-  async fileNode(path: string, owner: string): Promise<FileNode> {
-    const res = await this.client.nebulix.filetree.v1.fileNode({ 
+  async treeNode(path: string, owner: string): Promise<TreeNode> {
+    const res = await this.client.atlas.filetree.v1.treeNode({ 
       path, 
       owner 
     })
