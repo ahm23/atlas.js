@@ -48,15 +48,6 @@ export class QueryHelper implements IQueryHelper {
     return res.file
   }
 
-  async treeNode(path: string, owner: string): Promise<TreeNode> {
-    const res = await this.client.atlas.filetree.v1.treeNode({ 
-      path, 
-      owner 
-    })
-
-    return res.node
-  }
-
   async provider(address: string): Promise<Provider> {
     const res = await this.client.atlas.storage.v1.provider({
       address
@@ -64,4 +55,7 @@ export class QueryHelper implements IQueryHelper {
 
     return res.provider
   }
+
+  treeNode          = async (path: string, owner: string): Promise<TreeNode> => (await this.client.atlas.filetree.v1.treeNode({ path, owner })).node
+  treeNodeChildren  = async (path: string, owner: string) => (await this.client.atlas.filetree.v1.treeNodeChildren({ path, owner })).nodes
 }

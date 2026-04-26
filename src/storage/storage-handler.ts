@@ -1,7 +1,7 @@
 import EventEmitter from 'events';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { PrivateKey } from 'eciesjs';
-import { AuthorityBundle } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tree';
+import { AuthorityBundle, TreeNode } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/provider';
 import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/subscription';
 import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/tx';
@@ -38,6 +38,27 @@ type QueuedFile = IQueuedFile & {
   metadata?: Partial<IFileMetadata>;
 };
 
+export class DirectoryLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DirectoryLoadError';
+  }
+}
+
+export class AccountError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AccountError';
+  }
+}
+
+export class SubscriptionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SubscriptionError';
+  }
+}
+
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
   MERKLE_BUILT = 'file:merkle-built',
@@ -58,19 +79,26 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   protected queuedFiles: Map<string, QueuedFile> = new Map();
   protected stagedFiles: Map<string, IFileMetadata> = new Map();
 
-  protected address: string;
+  protected _address: string;
   protected _activeSubscription?: StorageSubscription;
   private accessKeyPair?: PrivateKey;
   private accessKeyPairAddress?: string;
+  private _isAuthorized = true;
 
   protected _providers: Provider[] = [];
   private _drives: IAtlasDriveInfo[] = [];
   private _directory: IDirectory = createEmptyDirectory();
 
+  /**
+   * Create a storage handler bound to an Atlas client and its active wallet.
+   *
+   * The handler listens for wallet connection changes so it can reload account
+   * storage state when the user switches accounts.
+   */
   constructor(client: AtlasClient) {
     super();
     this.client = client;
-    this.address = client.getCurrentAddress();
+    this._address = client.getCurrentAddress();
 
     this.selectAccount = this.selectAccount.bind(this);
     this.client.on('walletConnected', this.selectAccount);
@@ -79,6 +107,12 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
   declare on: (event: StorageEvents | string, listener: (...args: any[]) => void) => this;
   declare emit: (event: StorageEvents | string, ...args: any[]) => boolean;
 
+  /**
+   * Build and initialize a storage handler in one call.
+   *
+   * This loads providers, attempts to load the active subscription, and opens
+   * the requested initial directory.
+   */
   static async new(client: AtlasClient, initialPath: string = 's'): Promise<StorageHandler> {
     const handler = new StorageHandler(client);
     await handler.loadProviders();
@@ -87,57 +121,102 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return handler;
   }
 
+  /**
+   * True when an active storage subscription is loaded.
+   */
   public get ready(): boolean {
     return this._activeSubscription !== undefined;
   }
 
+  /**
+   * True when the selected storage account matches the connected wallet.
+   */
+  public get isAuthorized(): boolean {
+    return this._isAuthorized;
+  }
+
+  /**
+   * Current directory metadata and children.
+   */
   public get directory(): IDirectory {
     return this._directory;
   }
 
+  /**
+   * Active subscription id, or an empty string when no subscription is loaded.
+   */
   public get subscriptionId(): string {
     return this._activeSubscription?.id ?? '';
   }
 
+  /**
+   * Active subscription status, or an empty string when no subscription is loaded.
+   */
   public get subscriptionStatus(): string {
     return this._activeSubscription?.status ?? '';
   }
 
+  /**
+   * Number of bytes currently used by the active subscription.
+   */
   public get storageUsed(): number {
     return Number(this._activeSubscription?.spaceUsed ?? 0);
   }
 
+  /**
+   * Number of bytes available in the active subscription.
+   */
   public get storageTotal(): number {
     return Number(this._activeSubscription?.spaceAvailable ?? 0);
   }
 
+  /**
+   * Loaded storage providers for the current chain state.
+   */
   public get providers(): Provider[] {
     return this._providers;
   }
 
-  public async loadSubscription(id?: string): Promise<boolean> {
+  /**
+   * Load a subscription for the current handler address.
+   *
+   * Emits `NEW_SUB` when found and `NO_SUB` when the query fails.
+   */
+  public async loadSubscription(id?: string): Promise<void> {
+    this.validateAuthority();
+
     try {
-      this._activeSubscription = await this.client.query.subscription(this.address, id);
+      this._activeSubscription = await this.client.query.subscription(this._address, id);
       this.emit(StorageHandlerEvent.NEW_SUB, this._activeSubscription);
-      return true;
-    } catch {
+    } catch (error) {
       this._activeSubscription = undefined;
       this.emit(StorageHandlerEvent.NO_SUB);
-      return false;
+      throw new SubscriptionError(`Failed to load subscription for "${this._address}": ${errorMessage(error)}`);
     }
   }
 
-  public async loadDirectory(path: string, owner: string = this.address): Promise<void> {
+  /**
+   * Load a filetree directory and its direct children.
+   *
+   * The loaded directory becomes available through the `directory` getter and
+   * a `NAV_DIR` event is emitted with the new path.
+   *
+   * Throws `TypeError` for invalid arguments and `DirectoryLoadError` when the
+   * directory cannot be loaded or parsed.
+   */
+  public async loadDirectory(path: string, owner: string = this._address): Promise<void> {
     if (!owner) {
-      throw new Error('Unable to load directory. No owner specified and no wallet connected.');
+      throw new TypeError('Unable to load directory. No owner specified and no wallet connected.');
     }
 
-    const dir = (await this.client.queryClient.atlas.filetree.v1.treeNode({ path, owner })).node;
+    const dir = await this.client.query.treeNode(path, owner);
     if (!dir) {
-      throw new Error(`Failed to load directory node "${path}" for owner "${owner}".`);
+      throw new DirectoryLoadError(`Directory node "${path}" was not found for owner "${owner}".`);
+    }
+    if (!isDirectoryNode(dir)) {
+      throw new DirectoryLoadError(`Filetree node "${path}" is a "${dir.nodeType}" node, not a directory.`);
     }
 
-    const children = (await this.client.queryClient.atlas.filetree.v1.treeNodeChildren({ path, owner })).nodes ?? [];
     const nextDirectory: IDirectory = {
       metadata: parseNodeContents(dir.contents, path),
       path,
@@ -145,14 +224,18 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       subdirs: [],
       objects: [],
     };
-
-    for (const node of children) {
-      if (node.nodeType === 'directory') {
-        nextDirectory.subdirs.push(parseNodeContents(node.contents, joinPath(path, 'directory')));
-      } else if (node.nodeType === 'file') {
-        nextDirectory.files.push(parseNodeContents(node.contents, joinPath(path, 'file')));
-      } else {
-        nextDirectory.objects.push(node.contents);
+    const children: TreeNode[] = await this.client.query.treeNodeChildren(path, owner) ?? [];
+    for (const [index, node] of children.entries()) {
+      try {
+        if (node.nodeType === 'directory') {
+          nextDirectory.subdirs.push(parseNodeContents(node.contents, `${path}/children[${index}]:directory`));
+        } else if (node.nodeType === 'file') {
+          nextDirectory.files.push(parseNodeContents(node.contents, `${path}/children[${index}]:file`));
+        } else {
+          nextDirectory.objects.push(node.contents);
+        }
+      } catch (error) {
+        console.warn(`Child ${index} of directory "${path}" has invalid "${node.nodeType}" contents:\n ${node.contents}`);
       }
     }
 
@@ -160,46 +243,68 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.emit(StorageHandlerEvent.NAV_DIR, nextDirectory.path);
   }
 
+  /**
+   * Reload the currently selected directory from chain state.
+   */
   public async reloadDirectory(): Promise<void> {
     await this.loadDirectory(this.directory.path);
   }
 
-  public async selectAccount(address: string): Promise<boolean> {
-    const previousAddress = this.address;
-    this.address = address;
-
-    if (!address || address !== this.client.getCurrentAddress()) {
-      return false;
+  /**
+   * Switch the handler to a storage account.
+   *
+   * Selecting the connected wallet enables authorized access. Selecting another
+   * address loads that account without enabling the local access key.
+   *
+   * Throws `TypeError` for invalid account arguments and `AccountError`
+   * when the selected account has no files to view.
+   */
+  public async selectAccount(address: string): Promise<void> {
+    if (!address) {
+      throw new TypeError('Unable to select account. No address specified.');
     }
+    this._isAuthorized = address === this.client.getCurrentAddress();
+    this._address = address;
 
-    if (previousAddress !== address) {
-      this.accessKeyPair = undefined;
-      this.accessKeyPairAddress = undefined;
-    }
-
-    if (!this.accessKeyPair || this.accessKeyPairAddress !== address) {
+    if (this._isAuthorized && (!this.accessKeyPair || this.accessKeyPairAddress !== address)) {
       await this.enableFullSigner();
     }
 
-    if (!(await this.loadSubscription())) {
-      return false;
+    if (this._isAuthorized) {
+      await this.loadSubscription();
     }
 
-    const drives = await this.loadDrives(address);
+    const drives = await this.findDrives(address);
     if (drives.length === 0) {
+      if (!this._isAuthorized) {
+        throw new AccountError(`Storage account "${address}" does not have any drives to view.`);
+      }
       this._drives = [await this.createDrive('home', true)];
       await this.loadDirectory('home');
-      return true;
+      return
+    } else {
+      const defaultDrive = drives.find((drive) => drive.isDefault) ?? drives[0];
+      this._drives = drives;
+      await this.loadDirectory(defaultDrive.name);
     }
-
-    const defaultDrive = drives.find((drive) => drive.isDefault) ?? drives[0];
-    this._drives = drives;
-    await this.loadDirectory(defaultDrive.name);
-    return true;
   }
 
+  /**
+   * Find all drive nodes owned by an address.
+   */
+  private async findDrives(address: string): Promise<IAtlasDriveInfo[]> {
+    const nodes = await this.client.query.treeNodeChildren('', address) ?? [];
+    // [TODO]: logic will change once encryting node contents is implemented
+    return nodes
+      .filter((node) => node.nodeType === 'drive')
+      .map((node) => parseNodeContents<IAtlasDriveInfo>(node.contents, 'drive'));
+  }
+
+  /**
+   * Create a top-level drive node for the active account.
+   */
   public async createDrive(name: string, isDefault: boolean = false): Promise<IAtlasDriveInfo> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     const contents: IAtlasDriveInfo = {
       name,
@@ -208,7 +313,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     };
 
     const msg = MessageComposer.MsgPostNode(
-      this.address,
+      this._address,
       name,
       'drive',
       JSON.stringify(contents),
@@ -220,11 +325,20 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return contents;
   }
 
+  /**
+   * Load the active storage provider set from the chain.
+   */
   public async loadProviders(): Promise<Provider[]> {
     this._providers = (await this.client.queryClient.atlas.storage.v1.providers()).providers ?? [];
     return this._providers;
   }
 
+  /**
+   * Add a file to the local queue and process it into upload-ready metadata.
+   *
+   * Processing may encrypt the file, build its Merkle root, and derive its FID.
+   * File processing events are emitted as each phase completes.
+   */
   public async queueFileAsync(file: File, options: IFileUploadOptions = {}): Promise<void> {
     const queuedFile: QueuedFile = {
       file,
@@ -239,6 +353,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     await this.processFile(file.name);
   }
 
+  /**
+   * Merge caller-provided metadata into an already queued file.
+   */
   public updateQueuedFileMetadata(fileKey: string, metadata: Partial<IFileMetadata>): void {
     const queuedFile = this.getQueuedFile(fileKey);
     queuedFile.metadata = {
@@ -248,8 +365,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.queuedFiles.set(fileKey, queuedFile);
   }
 
+  /**
+   * Commit queued files on-chain and upload their bytes to the storage gateway.
+   *
+   * Every queued file must already be in the `ready` state. The directory item
+   * count is updated in the same transaction as the file and filetree nodes.
+   */
   public async upload(dir: string = this._directory.path): Promise<void> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     if (this.queuedFiles.size === 0) {
       throw new Error('Cannot upload. Queue is empty.');
@@ -270,7 +393,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       postFileMessages.push(
         MessageComposer.MsgPostFile(
           queuedFile.fid,
-          this.address,
+          this._address,
           queuedFile.merkleRoot,
           queuedFile.file.size,
           queuedFile.replicas,
@@ -280,7 +403,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
       postNodeMessages.push(
         MessageComposer.MsgPostNode(
-          this.address,
+          this._address,
           contents.path,
           'file',
           JSON.stringify(contents),
@@ -295,8 +418,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     await this.reloadDirectory();
   }
 
+  /**
+   * Download a file by FID from one of its assigned storage providers.
+   *
+   * Encrypted files are decrypted with the viewer authority bundle stored on
+   * the filetree node.
+   */
   public async downloadFile(fid: string, basepath: string = this.directory.path): Promise<File> {
-    const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this.address);
+    const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._address);
     if (!nodeDetails || nodeDetails.nodeType !== 'file') {
       throw new Error(`Node "${joinPath(basepath, fid)}" is not a file.`);
     }
@@ -317,8 +446,13 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return ensureNonEmptyFile(await decryptChunkedFile(rawFile, nodeContents.meta.name, nodeContents.meta, aes));
   }
 
+  /**
+   * Delete one file from storage and its filetree node.
+   *
+   * Returns the transaction hash after refreshing the current directory.
+   */
   public async deleteFile(fid: string, basepath: string = this.directory.path): Promise<string> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     const msgs: EncodeObject[] = [
       await this.incrementDirectoryItemCount(basepath, -1),
@@ -330,8 +464,13 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return txResult.hash;
   }
 
+  /**
+   * Delete multiple files from storage and their filetree nodes.
+   *
+   * Returns the transaction hash after refreshing the current directory.
+   */
   public async deleteFiles(fids: string[], basepath: string = this.directory.path): Promise<string> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     if (fids.length === 0) {
       throw new Error('Cannot delete files. No file ids were provided.');
@@ -348,11 +487,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return txResult.hash;
   }
 
+  /**
+   * Delete a directory node from the filetree.
+   *
+   * If the deleted directory is currently open, the handler navigates to its
+   * parent directory. Otherwise the current directory is reloaded.
+   */
   public async deleteFolder(path: string = this.directory.path): Promise<string> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     const txResult = await this.client.signAndBroadcast([
-      MessageComposer.MsgDeleteNode(this.address, path),
+      MessageComposer.MsgDeleteNode(this._address, path),
     ]);
 
     if (path === this.directory.path) {
@@ -364,10 +509,16 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return txResult.hash;
   }
 
+  /**
+   * Return a snapshot of all queued files.
+   */
   public listQueuedFiles(): IQueuedFile[] {
     return Array.from(this.queuedFiles.values());
   }
 
+  /**
+   * Remove a file from the queue and abort processing when possible.
+   */
   public removeQueuedFile(fileKey: string): void {
     const queuedFile = this.queuedFiles.get(fileKey);
     if (!queuedFile) return;
@@ -376,6 +527,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.queuedFiles.delete(fileKey);
   }
 
+  /**
+   * Abort and remove all queued files.
+   */
   public clearQueuedFiles(): void {
     for (const queuedFile of this.queuedFiles.values()) {
       queuedFile.abortController?.abort();
@@ -383,14 +537,19 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.queuedFiles.clear();
   }
 
+  /**
+   * Create a child directory under the supplied base path.
+   *
+   * Returns the transaction hash after reloading the parent directory.
+   */
   public async createDirectory(name: string, basepath: string = this._directory.path): Promise<string> {
-    this.validateCurrentAccount();
+    this.validateAuthority();
 
     const now = Date.now();
     const path = joinPath(basepath, name);
     const contents: IDirectoryNodeContents = {
       name,
-      owner: this.address,
+      owner: this._address,
       path,
       itemCount: 0,
       dateUpdated: now,
@@ -399,7 +558,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     const msgs: EncodeObject[] = [
       await this.incrementDirectoryItemCount(basepath, 1),
-      MessageComposer.MsgPostNode(this.address, path, 'directory', JSON.stringify(contents), [], []),
+      MessageComposer.MsgPostNode(this._address, path, 'directory', JSON.stringify(contents), [], []),
     ];
 
     const txResult = await this.client.signAndBroadcast(msgs);
@@ -407,8 +566,13 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return txResult.hash;
   }
 
-  public async purchaseSubscription(bytes: number, days: number, address: string = this.address): Promise<string> {
-    this.validateCurrentAccount();
+  /**
+   * Purchase a storage subscription for the active account or a receiver.
+   *
+   * The minimum purchase is one gigabyte for one day.
+   */
+  public async purchaseSubscription(bytes: number, days: number, address: string = this._address): Promise<string> {
+    this.validateAuthority();
 
     if (bytes < 1024 ** 3) {
       throw new Error('Cannot purchase less than 1GB of storage.');
@@ -421,7 +585,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       {
         typeUrl: MsgBuyStorage.typeUrl,
         value: MsgBuyStorage.fromPartial({
-          creator: this.address,
+          creator: this._address,
           receiver: address,
           duration: days,
           bytes,
@@ -435,6 +599,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return txResult.hash;
   }
 
+  /**
+   * Decrypt the AES bundle granted to the connected wallet.
+   */
   protected async extractAesKey(permissions: AuthorityBundle[]): Promise<IAesBundle> {
     const keyPair = this.requireAccessKeyPair();
     const userAuth = permissions.find((obj) => obj.address === this.client.getCurrentAddress());
@@ -445,6 +612,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return importAesBundle(keyPair, userAuth.secret);
   }
 
+  /**
+   * Ask the wallet to sign a stable seed and derive the local ECIES keypair.
+   *
+   * The derived keypair is used only to wrap and unwrap file encryption keys.
+   */
   private async enableFullSigner(): Promise<void> {
     const selectedWallet = this.client.getWalletType();
     const address = this.client.getCurrentAddress();
@@ -468,13 +640,12 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.accessKeyPairAddress = address;
   }
 
-  private async loadDrives(address: string): Promise<IAtlasDriveInfo[]> {
-    const nodes = (await this.client.queryClient.atlas.filetree.v1.treeNodeChildren({ path: '', owner: address })).nodes ?? [];
-    return nodes
-      .filter((node) => node.nodeType === 'drive')
-      .map((node) => parseNodeContents<IAtlasDriveInfo>(node.contents, 'drive'));
-  }
-
+  /**
+   * Prepare one queued file for upload.
+   *
+   * This runs optional encryption, Merkle tree construction, and FID derivation,
+   * updating queue status and emitting progress events as it goes.
+   */
   private async processFile(fileKey: string): Promise<void> {
     const queuedFile = this.queuedFiles.get(fileKey);
     if (!queuedFile) return;
@@ -509,7 +680,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       queuedFile.merkleRoot = tree.root;
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, { merkleRoot: bytesToHex(queuedFile.merkleRoot) });
 
-      queuedFile.fid = await buildFid(queuedFile.merkleRoot, this.address, queuedFile.nonce);
+      queuedFile.fid = await buildFid(queuedFile.merkleRoot, this._address, queuedFile.nonce);
       this.queuedFiles.set(fileKey, queuedFile);
       throwIfAborted(abortController.signal);
 
@@ -522,6 +693,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
   }
 
+  /**
+   * Normalize file processing failures into queue status and events.
+   */
   private handleFileProcessingError(fileKey: string, error: unknown): void {
     if (error instanceof CancellationException || this.queuedFiles.get(fileKey)?.abortController?.signal.aborted) {
       this.queuedFiles.delete(fileKey);
@@ -537,12 +711,18 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.emit(FileProcessingEvent.ERROR, fileKey, message);
   }
 
+  /**
+   * Update a queued file status while preserving observable map updates.
+   */
   private updateQueuedFileStatus(fileKey: string, status: QueueStatus): void {
     const queuedFile = this.getQueuedFile(fileKey);
     queuedFile.status = status;
     this.queuedFiles.set(fileKey, queuedFile);
   }
 
+  /**
+   * Fetch a queued file or throw a typed queue error.
+   */
   private getQueuedFile(fileKey: string): QueuedFile {
     const queuedFile = this.queuedFiles.get(fileKey);
     if (!queuedFile) {
@@ -551,19 +731,25 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return queuedFile;
   }
 
+  /**
+   * Assert a queued file has completed preprocessing and has a FID.
+   */
   private assertReadyForUpload(fileKey: string, queuedFile: QueuedFile): asserts queuedFile is QueuedFile & { fid: string } {
     if (queuedFile.status !== 'ready' || !queuedFile.fid) {
       throw new Error(`File ${fileKey} is not ready for upload.`);
     }
   }
 
+  /**
+   * Build the JSON contents stored in the filetree node for an uploaded file.
+   */
   private async buildFileNodeContents(dir: string, queuedFile: QueuedFile & { fid: string }): Promise<ITreeNodeContents> {
     const now = Date.now();
     const file = queuedFile.file;
 
     return {
       fid: queuedFile.fid,
-      owner: this.address,
+      owner: this._address,
       path: joinPath(dir, queuedFile.fid),
       merkleRoot: bytesToHex(queuedFile.merkleRoot),
       dateUpdated: now,
@@ -579,6 +765,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     };
   }
 
+  /**
+   * Build viewer/editor authority bundles for encrypted files.
+   *
+   * Unencrypted files do not need authority bundles.
+   */
   private async buildAuthorityBundles(queuedFile: QueuedFile): Promise<AuthorityBundle[]> {
     if (!queuedFile.encryption) {
       return [];
@@ -592,12 +783,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const keyPair = this.requireAccessKeyPair();
     return [
       {
-        address: this.address,
+        address: this._address,
         secret: await exportAesBundle(keyPair.publicKey.toHex(), aes),
       },
     ];
   }
 
+  /**
+   * Upload all queued file bytes to the storage gateway.
+   *
+   * Files are removed from the queue only after their gateway upload succeeds.
+   */
   private async uploadQueuedFiles(queuedEntries: Array<[string, QueuedFile]>): Promise<void> {
     await Promise.all(
       queuedEntries.map(async ([fileKey, queuedFile]) => {
@@ -614,6 +810,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     );
   }
 
+  /**
+   * Fetch raw file bytes from the configured storage gateway.
+   */
   private async download(fid: string, provider: string, fileName: string, fileMeta: FilePropertyBag): Promise<File> {
     await this.client.query.provider(provider);
     const response = await fetch(`${DEFAULT_STORAGE_GATEWAY}/download/${fid}`, { method: 'GET' });
@@ -626,15 +825,21 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return new File([body], fileName, fileMeta);
   }
 
+  /**
+   * Create the chain messages needed to remove a file and its tree node.
+   */
   private buildDeleteFileMessages(fid: string, basepath: string): EncodeObject[] {
     return [
-      MessageComposer.MsgDeleteNode(this.address, joinPath(basepath, fid)),
-      MessageComposer.MsgDeleteFile(this.address, fid),
+      MessageComposer.MsgDeleteNode(this._address, joinPath(basepath, fid)),
+      MessageComposer.MsgDeleteFile(this._address, fid),
     ];
   }
 
+  /**
+   * Build a replacement directory node with an adjusted child item count.
+   */
   private async incrementDirectoryItemCount(path: string, inc: number): Promise<EncodeObject> {
-    const folderNode = await this.client.query.treeNode(path, this.address);
+    const folderNode = await this.client.query.treeNode(path, this._address);
     if (!folderNode) {
       throw new Error(`Directory "${path}" does not exist.`);
     }
@@ -644,7 +849,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     folderContents.dateUpdated = Date.now();
 
     return MessageComposer.MsgPostNode(
-      this.address,
+      this._address,
       path,
       folderNode.nodeType,
       JSON.stringify(folderContents),
@@ -653,15 +858,18 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     );
   }
 
-  private validateCurrentAccount(): void {
-    if (!this.address) {
-      throw new Error('Cannot perform this operation without connecting a wallet.');
-    }
-    if (this.address !== this.client.getCurrentAddress()) {
-      throw new Error('Cannot perform this operation on another account.');
+  /**
+   * Ensure the handler is operating on the currently connected wallet account.
+   */
+  private validateAuthority(): void {
+    if (!this.isAuthorized) {
+      throw new AccountError(`Account ${this.client.getCurrentAddress()} is not authorized to perform this action.`);
     }
   }
 
+  /**
+   * Return the derived storage keypair or throw if signing has not been enabled.
+   */
   private requireAccessKeyPair(): PrivateKey {
     if (!this.accessKeyPair) {
       throw new Error('Storage signer has not been initialized.');
@@ -680,7 +888,16 @@ function createEmptyDirectory(): IDirectory {
   };
 }
 
+function isDirectoryNode(node: TreeNode): boolean {
+  return node.nodeType === 'directory' || node.nodeType === 'drive';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function parseNodeContents<T>(contents: string, path: string): T {
+  // [TODO]: logic will change once encryting node contents is implemented, view access bundle will be passed as arg too
   try {
     return JSON.parse(contents) as T;
   } catch (error) {
