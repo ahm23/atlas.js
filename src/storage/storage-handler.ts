@@ -11,10 +11,10 @@ import {
   IStagedFile,
 } from './types';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
-import { bytesToHex, extractFileMetaData } from '@/utils/converters';
+import { bytesToHex, extractFileMetaData, stringToShaHex } from '@/utils/converters';
 import { buildFid, hashAndHex } from '@/utils/hash';
 import { IAesBundle } from '@/interfaces/encryption';
-import { aesBlobCrypt, exportAesBundle, generateAesKey } from '@/utils/crypto';
+import { aesBlobCrypt, exportAesBundle, generateAesKey, importAesBundle } from '@/utils/crypto';
 import { atlas, cosmos } from '@atlas/atlas.js-protos';
 import { AtlasClient } from '@/atlas-client';
 import { EncodeObject } from '@cosmjs/proto-signing';
@@ -23,7 +23,7 @@ import { StargateClient } from '@cosmjs/stargate';
 import { QueryTreeNodeResponse } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/query';
 
 import { IDirectory, IFileMeta, IAtlasDriveInfo } from '@/interfaces';
-import MerkleTree from 'merkletreejs';
+import { PrivateKey } from 'eciesjs'
 import { buildFileMerkleTree } from '@/utils/merkletree';
 import { Provider } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/provider';
 import EventEmitter from 'events';
@@ -33,6 +33,8 @@ import { UploadHelper } from './upload-helper';
 import { StorageSubscription } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/subscription';
 import { MsgBuyStorage } from '@atlas/atlas.js-protos/dist/types/atlas/storage/v1/tx';
 import { MsgPostNode } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tx';
+import { AuthorityBundle } from '@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tree';
+import { WalletType } from '@/wallets';
 
 export enum FileProcessingEvent {
   ENCRYPTED = 'file:encrypted',
@@ -50,16 +52,17 @@ export enum StorageHandlerEvent {
 export type StorageEvents = FileProcessingEvent | StorageHandlerEvent;
 
 export class StorageHandler extends EventEmitter implements IStorageHandler {
-  private client: AtlasClient;
-  private queuedFiles: Map<string, IQueuedFile> = new Map();
-  private stagedFiles: Map<string, IFileMetadata> = new Map();
+  protected client: AtlasClient;
+  protected queuedFiles: Map<string, IQueuedFile> = new Map();
+  protected stagedFiles: Map<string, IFileMetadata> = new Map();
 
-  private address;
-  private _activeSubscription: StorageSubscription | undefined
+  protected address;
+  protected _activeSubscription: StorageSubscription | undefined
+  private accessKeyPair: PrivateKey
 
+  protected _providers: Provider[] = [];
   private _drives: IAtlasDriveInfo[] = [];
   private _directory = {path: "", files: [], subdirs: [], objects: []} as IDirectory;
-  private _providers: Provider[] = [];
 
   constructor(client: AtlasClient) {
     super();
@@ -75,9 +78,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
   static async new(client: AtlasClient, initialPath: string = 's'): Promise<StorageHandler> {
     const handler = new StorageHandler(client)
+    await handler.loadProviders()
+
     await handler.loadSubscription()
     await handler.loadDirectory(initialPath)
-    await handler.loadProviders()
     return handler
   }
 
@@ -166,6 +170,14 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
   public async selectAccount(address: string): Promise<boolean> {
     this.address = address
+    console.log("ADDRESS:", this.address, this.client.getCurrentAddress())
+    if (address != this.client.getCurrentAddress()) {
+      return false;
+    }
+    else if (!this.accessKeyPair) {
+      await this.enableFullSigner()
+    }
+
     if (!await this.loadSubscription()) {
       return false;
     }
@@ -191,6 +203,50 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     return true;
   }
 
+  private async enableFullSigner(): Promise<void> {
+    try {
+      const selectedWallet = this.client.getWalletType()
+      const address = this.client.getCurrentAddress()
+      const chainId = this.client.getChainId()
+      const seed = "Welcome to Atlas Protocol"
+
+      let signed, signatureAsHex
+      switch (selectedWallet) {
+        case WalletType.KEPLR:
+          if (!window.keplr) {
+            throw 'Missing wallet extension'
+          } else {
+            signed = await window.keplr.signArbitrary(
+              chainId,
+              address,
+              seed,
+            )
+            signatureAsHex = await stringToShaHex(signed.signature)
+          }
+          break
+        case WalletType.LEAP:
+          if (!window.leap) {
+            throw 'Missing wallet extension'
+          } else {
+            signed = await window.leap.signArbitrary(
+              chainId,
+              address,
+              seed,
+            )
+            signatureAsHex = await stringToShaHex(signed.signature)
+          }
+          break
+        default:
+          throw new Error(
+            'No wallet selected but one is required to init StorageHandler',
+          )
+      }
+      this.accessKeyPair = PrivateKey.fromHex(signatureAsHex)
+    } catch (err) {
+      throw err
+    }
+  }
+
   public async createDrive(name: string, isDefault: boolean = false): Promise<IAtlasDriveInfo> {
     this._validateAccount()
 
@@ -205,6 +261,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
         name,
         "drive",
         JSON.stringify(contents),
+        [],
+        []
       )
       await this.client.signAndBroadcast([msg])
       return contents
@@ -366,7 +424,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       const msgs_postNode: any = []
       msgs_postNode.push(await this._incrementDirectoryItemCount(dir, this.queuedFiles.size))
 
-      this.stagedFiles.forEach(async (meta, key) => {
+
+      console.warn("QUEUED:", this.queuedFiles)
+      for (const [key, meta] of this.queuedFiles) {
         const qfile = this.queuedFiles.get(key)
 
         const contents: ITreeNodeContents = {
@@ -380,16 +440,16 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
           // [TBD]: can I do ...meta after name and type, and it won't overwrite them if undefined?
           meta: {
             ...meta,
-            name: meta.name || qfile.file.name,
+            name: meta.file.name || qfile.file.name,
             type: qfile.file.type,
             size: qfile.file.size,
             lastModified: qfile.file.lastModified,
           },
         }
 
-        const authorityBundle: AuthorityBundle = {
+        const ownerAuthorityBundle: AuthorityBundle = {
           address: this.address,
-          secret: exportAesBundle('', qfile.encryption.aes)
+          secret: await exportAesBundle(this.accessKeyPair.publicKey.toHex(), qfile.encryption.aes)
         }
 
         msgs_postFile.push(
@@ -407,10 +467,11 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
             `${dir}/${qfile.fid}`,
             "file",
             JSON.stringify(contents),
-
+            [ownerAuthorityBundle],
+            [ownerAuthorityBundle]
           )
         )
-      })
+      }
 
       const txResult = await this.client.signAndBroadcast([...msgs_postFile, ...msgs_postNode])
       // console.log(txResult)
@@ -435,7 +496,28 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const nodeContents = JSON.parse(nodeDetails.contents) as ITreeNodeContents
     const fileDetails = await this.client.query.file(fid)
 
-    const raw = await this.download(fid, fileDetails.providers[0], nodeContents.meta.name, nodeContents.meta)
+    let raw = await this.download(fid, fileDetails.providers[0], nodeContents.meta.name, nodeContents.meta)
+    const tmp = await raw.slice(0, 8).text()
+
+    console.log("Chunk Length:", Number(tmp))
+
+    if (Number(tmp) > 0) {
+      const parts: Blob[] = []
+      let aes = await this.extractAesKey(nodeDetails.viewers)
+      for (let i = 0; i < raw.size;) {
+        const offset = i + 8
+        const segSize = Number(await raw.slice(i, offset).text())
+        console.log("Chunk Length:", Number(segSize))
+        const last = offset + segSize
+        const segment = raw.slice(offset, last)
+        parts.push(await aesBlobCrypt(segment, aes, 'decrypt'))
+        i = last
+      }
+      raw = new File(parts, nodeContents.meta.name, nodeContents.meta)
+    }
+    if (raw.size == 0) {
+      throw new Error('File is empty')
+    }
 
     return raw
   }
@@ -443,7 +525,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
   private async download(fid: string, provider: string, fileName: string, fileMeta: FilePropertyBag): Promise<File> {
     try {
-      const url = `${provider}/download/${fid}`
+      let providerInfo = await this.client.query.provider(provider)
+      providerInfo.hostname = "https://api.oculux.io/api/v1"
+      const url = `${providerInfo.hostname}/download/${fid}`
       const resp = await fetch(url, { method: 'GET' })
       const contentLength = resp.headers.get('Content-Length')
       if (resp.status !== 200) {
@@ -570,7 +654,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     const msgs: EncodeObject[] = [
       await this._incrementDirectoryItemCount(basepath, 1),
-      MessageComposer.MsgPostNode(creator, this.directory.path + '/' + name, "directory", JSON.stringify(contents))
+      MessageComposer.MsgPostNode(creator, this.directory.path + '/' + name, "directory", JSON.stringify(contents), [], [])
     ]
     return (await this.client.signAndBroadcast(msgs)).hash
   }
@@ -613,7 +697,23 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       `${path}`,
       folderNode.nodeType,
       JSON.stringify(folderContents),
+      folderNode.viewers,
+      folderNode.editors
     )
+  }
+
+  protected async extractAesKey(permissions: AuthorityBundle[]): Promise<IAesBundle> {
+    try {
+      const userAuth = permissions.find(obj => obj.address === this.client.getCurrentAddress());
+      if (userAuth) {
+        const parsed = await importAesBundle(this.accessKeyPair, userAuth.secret)
+        return parsed
+      } else {
+        throw new Error('Not an authorized Viewer')
+      }
+    } catch (err) {
+      throw err
+    }
   }
 }
 

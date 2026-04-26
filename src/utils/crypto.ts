@@ -4,7 +4,7 @@ import { IAesBundle } from "@/interfaces/encryption"
 import { keyAlgo } from "./defaults"
 import { hexToBytes } from './atlas-merkletree'
 
-export async function aesBlobCrypt (
+export async function aesBlobCrypt(
   data: Blob,
   aes: IAesBundle,
   mode: 'encrypt' | 'decrypt',
@@ -18,7 +18,7 @@ export async function aesBlobCrypt (
   }
 }
 
-export async function aesCrypt (
+export async function aesCrypt(
   data: ArrayBuffer,
   aes: IAesBundle,
   mode: 'encrypt' | 'decrypt',
@@ -73,8 +73,30 @@ export async function exportAesBundle(eciesKey: string, aes: IAesBundle): Promis
   return `${ivString}|${keyString}`
 }
 
+export async function importAesBundle(eciesKey: PrivateKey, aes: string): Promise<IAesBundle> {
+  try {
+    if (aes.indexOf('|') < 0) {
+      throw new Error('Invalid source string')
+    }
+    const [iv_enc, key_enc] = aes.split('|').map(e => hexToBytes(e))
+    const iv = new Uint8Array(decrypt(eciesKey.toHex(), iv_enc))
+    const key_raw = new Uint8Array(decrypt(eciesKey.toHex(), key_enc))
+
+    const key = await crypto.subtle.importKey('raw', key_raw, 'AES-GCM', true, [
+      'encrypt',
+      'decrypt',
+    ])
+
+    return {
+      iv, key
+    }
+  } catch (err) {
+    throw err
+  }
+}
+
 export function eciesEncrypt(key: string, content: Uint8Array): string {
-  return encrypt(key, content).toString('hex')
+  return encrypt(key, content).toHex().toString()
 }
 
 export function eciesDecrypt(key: PrivateKey, content: string): Uint8Array {

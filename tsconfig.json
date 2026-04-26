@@ -3,7 +3,7 @@
     "target": "es2020",
     "useDefineForClassFields": true,
     "module": "es2020",
-    "lib": ["es2020", "DOM", "DOM.Iterable"],
+    "lib": ["esnext", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,

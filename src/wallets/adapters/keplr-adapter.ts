@@ -11,6 +11,7 @@ import { atlasDevnetChainConfig } from '@/utils/defaults';
 declare global {
   interface Window {
     keplr: any;
+    leap: any;
     getOfflineSigner: any;
   }
 }

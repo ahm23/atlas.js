@@ -5,6 +5,7 @@ import { StorageSubscription } from "@atlas/atlas.js-protos/dist/types/atlas/sto
 import { File } from "@atlas/atlas.js-protos/dist/types/atlas/storage/v1/file";
 import { TreeNode } from "@atlas/atlas.js-protos/dist/types/atlas/filetree/v1/tree";
 import { FileStats, StorageStats } from "./types";
+import { Provider } from "@atlas/atlas.js-protos/dist/types/atlas/storage/v1/provider";
 
 
 export class QueryHelper implements IQueryHelper {
@@ -54,5 +55,13 @@ export class QueryHelper implements IQueryHelper {
     })
 
     return res.node
+  }
+
+  async provider(address: string): Promise<Provider> {
+    const res = await this.client.atlas.storage.v1.provider({
+      address
+    })
+
+    return res.provider
   }
 }
