@@ -2,6 +2,13 @@
 
 export type HashFunction = (data: Uint8Array) => Uint8Array | bigint;
 
+interface MerkleTreeOptions {
+  buildLeafMap?: boolean;
+  domainSeparation?: boolean;
+  reuseHashInputBuffer?: boolean;
+  useXXH128?: boolean;
+}
+
 export interface MerkleProof {
   siblings: Uint8Array[];
   index: number;
@@ -10,8 +17,11 @@ export interface MerkleProof {
 
 export class MerkleTree {
   private readonly hashFunc: HashFunction;
+  private readonly buildLeafMapOnInit: boolean;
   private readonly domainSeparation: boolean;
+  private readonly reuseHashInputBuffer: boolean;
   private readonly useXXH128: boolean;
+  private leafMapReady: boolean;
   
   public readonly leaves: Uint8Array[];
   public readonly leafMap: Map<string, number>;
@@ -23,39 +33,51 @@ export class MerkleTree {
   constructor(
     input: Uint8Array[],
     hashFunc: HashFunction,
-    options: {
-      domainSeparation?: boolean;
-      useXXH128?: boolean;
-    } = {}
+    options: MerkleTreeOptions = {}
   ) {
     if (input.length === 0) {
       throw new Error("Invalid number of leaves");
     }
 
     this.hashFunc = hashFunc;
+    this.buildLeafMapOnInit = options.buildLeafMap ?? true;
     this.domainSeparation = options.domainSeparation ?? false;
+    this.reuseHashInputBuffer = options.reuseHashInputBuffer ?? false;
     this.useXXH128 = options.useXXH128 ?? true;
     this.leafCount = input.length;
     this.leafMap = new Map();
+    this.leafMapReady = false;
 
-    // Compute leaves with domain separation if enabled
+    const startedAt = performance.now();
     this.leaves = this.computeLeafNodes(input);
+    const leavesFinishedAt = performance.now();
+    console.debug(
+      `[MerkleTree] Prepared ${this.leafCount} leaf nodes in ${formatDuration(leavesFinishedAt - startedAt)}`,
+    );
     
-    // Build the tree
     const result = this.grow();
+    const growFinishedAt = performance.now();
+    console.debug(
+      `[MerkleTree] Grew tree in ${formatDuration(growFinishedAt - leavesFinishedAt)}`,
+    );
     this.nodes = result.nodes;
     this.root = result.root;
     this.depth = result.depth;
   }
 
   private computeLeafNodes(input: Uint8Array[]): Uint8Array[] {
-    const leaves: Uint8Array[] = [];
+    const leaves: Uint8Array[] = new Array(input.length);
     
     for (let i = 0; i < input.length; i++) {
       const leaf = this.sproutLeaf(input[i]);
-      leaves.push(leaf);
-      this.leafMap.set(bytesToHex(leaf), i);
+      leaves[i] = leaf;
+
+      if (this.buildLeafMapOnInit) {
+        this.leafMap.set(bytesToHex(leaf), i);
+      }
     }
+
+    this.leafMapReady = this.buildLeafMapOnInit;
     
     return leaves;
   }
@@ -76,7 +98,8 @@ export class MerkleTree {
 
   private grow(): { nodes: Uint8Array[][]; root: Uint8Array; depth: number } {
     const nodes: Uint8Array[][] = [];
-    let level: Uint8Array[] = [...this.leaves];
+    let level = this.leaves;
+    let reusableHashInput: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 
     while (level.length > 1) {
       nodes.push(level);
@@ -92,17 +115,10 @@ export class MerkleTree {
           // Normal pair: hash together
           const left = level[i];
           const right = level[i + 1];
-          
-          let raw: Uint8Array;
-          if (this.domainSeparation) {
-            raw = new Uint8Array(1 + left.length + right.length);
-            raw[0] = 0x01; // nodePrefix
-            raw.set(left, 1);
-            raw.set(right, 1 + left.length);
-          } else {
-            raw = new Uint8Array(left.length + right.length);
-            raw.set(left);
-            raw.set(right, left.length);
+          const raw = this.combineNodePair(left, right, reusableHashInput);
+
+          if (this.reuseHashInputBuffer && reusableHashInput.length !== raw.length) {
+            reusableHashInput = raw;
           }
           
           nextLevel[i >> 1] = this.normalizeHash(this.hashFunc(raw));
@@ -121,23 +137,36 @@ export class MerkleTree {
     };
   }
 
+  private combineNodePair(left: Uint8Array, right: Uint8Array, reusableHashInput: Uint8Array): Uint8Array {
+    const prefixBytes = this.domainSeparation ? 1 : 0;
+    const requiredLength = prefixBytes + left.length + right.length;
+    const raw = this.reuseHashInputBuffer && reusableHashInput.length === requiredLength
+      ? reusableHashInput
+      : new Uint8Array(requiredLength);
+
+    if (this.domainSeparation) {
+      raw[0] = 0x01; // nodePrefix
+      raw.set(left, 1);
+      raw.set(right, 1 + left.length);
+    } else {
+      raw.set(left);
+      raw.set(right, left.length);
+    }
+
+    return raw;
+  }
+
   private normalizeHash(hash: Uint8Array | bigint): Uint8Array {
     if (hash instanceof Uint8Array) {
       return hash;
     }
     
-    // Convert bigint to bytes (XXH128 = 16 bytes, XXH64 = 8 bytes)
-    const byteLength = this.useXXH128 ? 16 : 8;
-    const bytes = new Uint8Array(byteLength);
-    let v = hash;
-    for (let i = byteLength - 1; i >= 0; i--) {
-      bytes[i] = Number(v & 0xFFn);
-      v >>= 8n;
-    }
-    return bytes;
+    return bigintToBytes(hash, this.useXXH128 ? 16 : 8);
   }
 
   public generateProof(leafData: Uint8Array): MerkleProof {
+    this.ensureLeafMap();
+
     const leaf = this.sproutLeaf(leafData);
     const leafHex = bytesToHex(leaf);
     const index = this.leafMap.get(leafHex);
@@ -209,6 +238,17 @@ export class MerkleTree {
       useXXH128: this.useXXH128,
     });
   }
+
+  private ensureLeafMap(): void {
+    if (this.leafMapReady) {
+      return;
+    }
+
+    for (let i = 0; i < this.leaves.length; i++) {
+      this.leafMap.set(bytesToHex(this.leaves[i]), i);
+    }
+    this.leafMapReady = true;
+  }
 }
 
 // Standalone verification function (matches Go's Verify)
@@ -265,13 +305,7 @@ export function verifyMerkleProof(
     if (hash instanceof Uint8Array) {
       result = hash;
     } else {
-      const byteLength = useXXH128 ? 16 : 8;
-      result = new Uint8Array(byteLength);
-      let v = hash;
-      for (let i = byteLength - 1; i >= 0; i--) {
-        result[i] = Number(v & 0xFFn);
-        v >>= 8n;
-      }
+      result = bigintToBytes(hash, useXXH128 ? 16 : 8);
     }
 
     path >>= 1;
@@ -301,4 +335,35 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+const UINT64_MASK = (1n << 64n) - 1n;
+
+function bigintToBytes(value: bigint, byteLength: number): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  const view = new DataView(bytes.buffer);
+
+  if (byteLength === 16) {
+    view.setBigUint64(0, value >> 64n, false);
+    view.setBigUint64(8, value & UINT64_MASK, false);
+    return bytes;
+  }
+
+  if (byteLength === 8) {
+    view.setBigUint64(0, value & UINT64_MASK, false);
+    return bytes;
+  }
+
+  let v = value;
+  for (let i = byteLength - 1; i >= 0; i--) {
+    bytes[i] = Number(v & 0xFFn);
+    v >>= 8n;
+  }
+  return bytes;
+}
+
+function formatDuration(milliseconds: number): string {
+  return milliseconds < 1000
+    ? `${milliseconds.toFixed(1)}ms`
+    : `${(milliseconds / 1000).toFixed(2)}s`;
 }

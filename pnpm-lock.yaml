@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@atlas/atlas.js-protos':
-        specifier: file:atlas-atlas.js-protos-0.1.0.tgz
-        version: file:atlas-atlas.js-protos-0.1.0.tgz(@chain-registry/v2-types@0.53.146)(@chain-registry/v2@1.71.237)(google-protobuf@3.21.4)
+        specifier: file:atlas-atlas.js-protos-0.1.1.tgz
+        version: file:atlas-atlas.js-protos-0.1.1.tgz(@chain-registry/v2-types@0.53.146)(@chain-registry/v2@1.71.237)(google-protobuf@3.21.4)
       '@cosmjs/encoding':
         specifier: ^0.38.1
         version: 0.38.1
@@ -35,6 +35,9 @@ importers:
       axios:
         specifier: ^1.13.3
         version: 1.15.2
+      eciesjs:
+        specifier: ^0.5.0
+        version: 0.5.0
       merkletreejs:
         specifier: ^0.6.0
         version: 0.6.0
@@ -94,9 +97,9 @@ packages:
     resolution: {integrity: sha512-1ImKEpP744yTViwtRPXzdtrCsblzwNj18gJTUpNeVzTUR7aTrS4LTU/mctLKkwKQhgqfcGDKovroa0Aasi0ngQ==}
     hasBin: true
 
-  '@atlas/atlas.js-protos@file:atlas-atlas.js-protos-0.1.0.tgz':
-    resolution: {integrity: sha512-ckr6reBYHw7yk92d8GRp1hBs2sS8RlVFukGNBY8Y1wjF0ij46O8XyMVRnu8tUVKM8tmYW9ZbByktSuayoT0Nug==, tarball: file:atlas-atlas.js-protos-0.1.0.tgz}
-    version: 0.1.0
+  '@atlas/atlas.js-protos@file:atlas-atlas.js-protos-0.1.1.tgz':
+    resolution: {integrity: sha512-K2E01ghuioG7wt/1nfURjM9c1XS8Rx4by9T/XAleKmK1aR0NYt3bAHnH4mBog36qcnzQpKQwkmlLuAx2kencqw==, tarball: file:atlas-atlas.js-protos-0.1.1.tgz}
+    version: 0.1.1
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -212,6 +215,12 @@ packages:
   '@cosmology/protobufjs@7.3.2':
     resolution: {integrity: sha512-zHf/yqGQ7QSjIYvv7kvGKY9yXNjqj55kWdRyntrXwnte/tY8uMTuCFD/EWC48LGhGu3P7nbzTlhyCGMc3xm9bw==}
     engines: {node: '>=12.0.0'}
+
+  '@ecies/ciphers@0.2.6':
+    resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
+    engines: {bun: '>=1', deno: '>=2.7.10', node: '>=16'}
+    peerDependencies:
+      '@noble/ciphers': ^1.0.0
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -1150,6 +1159,10 @@ packages:
 
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
+
+  eciesjs@0.5.0:
+    resolution: {integrity: sha512-s0J9SEVYAEPg7J63GFMApLYzPH9VNIQIyC6s15JpnqVc0TqcKWdbgFlnAweEBRyMmko2dcs2sfC83Hj4J43tuA==}
+    engines: {bun: '>=1', deno: '>=2.7.10', node: '>=16'}
 
   elliptic@6.6.1:
     resolution: {integrity: sha512-RaddvvMatK2LJHqFJ+YA4WysVN5Ita9E35botqIYspQ4TkRAlCicdzKOjlyv/1Za5RyTNn7di//eEV0uTAfe3g==}
@@ -2261,7 +2274,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@atlas/atlas.js-protos@file:atlas-atlas.js-protos-0.1.0.tgz(@chain-registry/v2-types@0.53.146)(@chain-registry/v2@1.71.237)(google-protobuf@3.21.4)':
+  '@atlas/atlas.js-protos@file:atlas-atlas.js-protos-0.1.1.tgz(@chain-registry/v2-types@0.53.146)(@chain-registry/v2@1.71.237)(google-protobuf@3.21.4)':
     dependencies:
       '@ahm23/telescope': 2.3.1
       '@ahm23/telescope-ast': 2.3.1
@@ -2500,6 +2513,10 @@ snapshots:
       '@types/long': 5.0.0
       '@types/node': 22.19.17
       long: 5.3.2
+
+  '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
+    dependencies:
+      '@noble/ciphers': 1.3.0
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
@@ -3443,6 +3460,13 @@ snapshots:
       gopd: 1.2.0
 
   eastasianwidth@0.2.0: {}
+
+  eciesjs@0.5.0:
+    dependencies:
+      '@ecies/ciphers': 0.2.6(@noble/ciphers@1.3.0)
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
 
   elliptic@6.6.1:
     dependencies:
