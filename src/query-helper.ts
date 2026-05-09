@@ -29,6 +29,9 @@ export class QueryHelper implements IQueryHelper {
       subscriptionId: id
     })
 
+    res.subscription.spaceUsed /= 3
+    res.subscription.spaceAvailable /= 3
+
     return res.subscription
   }
 
