@@ -10,7 +10,7 @@ import { AtlasClient } from '@/atlas-client';
 import { IStorageHandler } from '@/interfaces/classes/IStorageHandler';
 import { IDirectory, IAtlasDriveInfo } from '@/interfaces';
 import { IAesBundle } from '@/interfaces/encryption';
-import { WalletType } from '@/wallets';
+import { TxOptions, WalletType } from '@/wallets';
 import { MessageComposer } from '@/messages/composer';
 import { bytesToHex, stringToShaHex } from '@/utils/converters';
 import { aesBlobCrypt, exportAesBundle, generateAesKey, importAesBundle } from '@/utils/crypto';
@@ -30,6 +30,7 @@ import {
 } from './types';
 
 const DEFAULT_STORAGE_GATEWAY = 'https://storage.atlasprotocol.cloud/api/v1';
+const FOLDER_DELETE_GAS_ADJUSTMENT = 3;
 const SIGNER_SEED = 'Welcome to Atlas Protocol';
 
 type QueueStatus = 'idle' | 'encrypting' | 'merkling' | 'ready' | 'uploading' | 'uploaded' | 'error';
@@ -493,12 +494,15 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * If the deleted directory is currently open, the handler navigates to its
    * parent directory. Otherwise the current directory is reloaded.
    */
-  public async deleteFolder(path: string = this.directory.path): Promise<string> {
+  public async deleteFolder(path: string = this.directory.path, options?: TxOptions): Promise<string> {
     this.validateAuthority();
 
     const txResult = await this.client.signAndBroadcast([
       MessageComposer.MsgDeleteNode(this._address, path),
-    ]);
+    ], {
+      gasAdjustment: FOLDER_DELETE_GAS_ADJUSTMENT,
+      ...options,
+    });
 
     if (path === this.directory.path) {
       await this.loadDirectory(parentPath(path));

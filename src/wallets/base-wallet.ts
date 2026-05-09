@@ -47,7 +47,7 @@ export abstract class BaseWallet {
       const fee = options?.fee ?? (
         Number.isFinite(gasLimit) && gasLimit > 0
           ? calculateFee(Math.ceil(gasLimit), this.config.gasPrice || '0.025uatl')
-          : this.config.gasAdjustment || 'auto'
+          : options?.gasAdjustment ?? this.config.gasAdjustment ?? 'auto'
       );
       console.log("signed tx msgs:", txBody.msgs)
       const signedTx = await this.signingClient.signAndBroadcast(

@@ -50,6 +50,7 @@ export interface TxOptions {
   memo?: string;
   fee?: any;
   gas?: string;
+  gasAdjustment?: number;
 }
 
 export interface IChainConfig {
