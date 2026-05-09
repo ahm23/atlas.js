@@ -6,7 +6,7 @@ import {
   BroadcastResult, 
   TxOptions 
 } from './types';
-import { DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmjs/stargate';
+import { calculateFee, DeliverTxResponse, SigningStargateClient, StargateClient } from '@cosmjs/stargate';
 import { OfflineSigner as OfflineAminoSigner, Registry } from '@cosmjs/proto-signing';
 import { TxRaw } from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import { GasPrice } from '@cosmjs/stargate';
@@ -43,10 +43,12 @@ export abstract class BaseWallet {
     }
 
     try {
-      const fee = options?.fee || {
-        amount: [{ denom: 'uatl', amount: '250000' }],
-        gas: options?.gas || '250000'
-      };
+      const gasLimit = Number(options?.gas);
+      const fee = options?.fee ?? (
+        Number.isFinite(gasLimit) && gasLimit > 0
+          ? calculateFee(Math.ceil(gasLimit), this.config.gasPrice || '0.025uatl')
+          : this.config.gasAdjustment || 'auto'
+      );
       console.log("signed tx msgs:", txBody.msgs)
       const signedTx = await this.signingClient.signAndBroadcast(
         this.walletConnection.address,
@@ -161,7 +163,7 @@ export abstract class BaseWallet {
       // Create signing client
       const gasPrice = this.config.gasPrice 
         ? GasPrice.fromString(this.config.gasPrice)
-        : GasPrice.fromString('0.025udepin');
+        : GasPrice.fromString('0.025uatl');
 
       // Create registry with the new, correctly-generated types
       const registry = new Registry();
@@ -180,7 +182,7 @@ export abstract class BaseWallet {
         offlineSigner,
         { 
           registry,
-          gasPrice: GasPrice.fromString("0.025uatl")
+          gasPrice
          }
       );
 

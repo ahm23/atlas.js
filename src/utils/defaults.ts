@@ -10,8 +10,8 @@ export const keyAlgo: AesKeyGenParams = {
 export const atlasDevnetChainConfig: IChainConfig = {
   chainId: 'atlas-1',
   chainName: 'Atlas Protocol',
-  rpc: 'https://proxy.oculux.io',
-  rest: 'https://api.oculux.io',
+  rpc: 'https://rpc.atlasprotocol.cloud',
+  rest: 'https://api.atlasprotocol.cloud',
   bip44: {
     coinType: 118,
   },
@@ -41,9 +41,9 @@ export const atlasDevnetChainConfig: IChainConfig = {
       coinMinimalDenom: 'uatl',
       coinDecimals: 6,
       gasPriceStep: {
-        low: 0.002,
-        average: 0.002,
-        high: 0.02,
+        low: 0.025,
+        average: 0.03,
+        high: 0.04,
       },
     },
   ],

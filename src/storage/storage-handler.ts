@@ -29,7 +29,7 @@ import {
   ITreeNodeContents,
 } from './types';
 
-const DEFAULT_STORAGE_GATEWAY = 'https://api.oculux.io/api/v1';
+const DEFAULT_STORAGE_GATEWAY = 'https://storage.atlasprotocol.cloud/api/v1';
 const SIGNER_SEED = 'Welcome to Atlas Protocol';
 
 type QueueStatus = 'idle' | 'encrypting' | 'merkling' | 'ready' | 'uploading' | 'uploaded' | 'error';

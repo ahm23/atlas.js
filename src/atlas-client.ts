@@ -1,4 +1,4 @@
-import { WalletManager, WalletType, WalletConnection } from '@/wallets';
+import { WalletManager, WalletType, WalletConnection, TxOptions } from '@/wallets';
 import EventEmitter from 'events';
 import { StorageHandler } from './storage/storage-handler';
 import { atlas } from '@atlas/atlas.js-protos';
@@ -160,7 +160,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
   async signAndBroadcast(
     messages: any[],
-    memo?: string,
+    options?: TxOptions | string,
   ): Promise<IndexedTx> {
     
     if (!this.isWalletConnected()) {
@@ -169,7 +169,10 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
     try {
       console.log("Messages:", messages)
-      const txHash = await this._walletManager.signAndBroadcast(messages, { memo });
+      const txOptions = typeof options === 'string'
+        ? { memo: options }
+        : options;
+      const txHash = await this._walletManager.signAndBroadcast(messages, txOptions);
       const result = await this.waitForTransaction(txHash)
       return result
     } catch (error) {
