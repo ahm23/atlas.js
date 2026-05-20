@@ -167,7 +167,7 @@ export abstract class BaseWallet {
 
       // Create registry with the new, correctly-generated types
       const registry = new Registry();
-      console.log("REGISTRY:", GlobalDecoderRegistry.registry)
+      // console.log("REGISTRY:", GlobalDecoderRegistry.registry)
       for (const [typeUrl, decoder] of Object.entries(GlobalDecoderRegistry.registry)) {
         registry.register(typeUrl, decoder as any);  // 'as any' to satisfy types (TelescopeGeneratedCodec extends GeneratedType)
       }
@@ -213,8 +213,8 @@ export abstract class BaseWallet {
       //   return originalEncode.call(this, message, writer);
       // };
 
-      console.log(offlineSigner)
-      console.log(this.signingClient)
+      // console.log(offlineSigner)
+      // console.log(this.signingClient)
 
       // const sendAmount = { denom: "uatl", amount: "100000" };
       // try {
@@ -258,7 +258,7 @@ export abstract class BaseWallet {
 
     // Encode with Telescope's encoder
     const telescopeBytes = cosmos.bank.v1beta1.MsgSend.encode(cmsg_raw).finish();
-    console.log("Telescope encoding (hex):", toHex(telescopeBytes));
+    // console.log("Telescope encoding (hex):", toHex(telescopeBytes));
 
     // Method 2: Create equivalent message via CosmJS's registry
     // Get the encoder from your client's registry
@@ -272,14 +272,14 @@ export abstract class BaseWallet {
     };
 
     const cosmjsBytes = cosmjsEncoder.encode(cosmjsMsg).finish();
-    console.log("CosmJS encoding (hex):", toHex(cosmjsBytes));
+    // console.log("CosmJS encoding (hex):", toHex(cosmjsBytes));
 
     // Compare byte by byte
-    console.log("\nByte comparison:");
+    // console.log("\nByte comparison:");
     const minLength = Math.min(telescopeBytes.length, cosmjsBytes.length);
     for (let i = 0; i < minLength; i++) {
       if (telescopeBytes[i] !== cosmjsBytes[i]) {
-        console.log(`Byte ${i}: Telescope=0x${telescopeBytes[i].toString(16)}, CosmJS=0x${cosmjsBytes[i].toString(16)}`);
+        // console.log(`Byte ${i}: Telescope=0x${telescopeBytes[i].toString(16)}, CosmJS=0x${cosmjsBytes[i].toString(16)}`);
         
         // Decode field info from this byte
         const tTag = telescopeBytes[i];
@@ -290,8 +290,8 @@ export abstract class BaseWallet {
         const cFieldNum = cTag >>> 3;
         const cWireType = cTag & 0x07;
         
-        console.log(`  Telescope: field ${tFieldNum}, wire ${tWireType}`);
-        console.log(`  CosmJS: field ${cFieldNum}, wire ${cWireType}`);
+        // console.log(`  Telescope: field ${tFieldNum}, wire ${tWireType}`);
+        // console.log(`  CosmJS: field ${cFieldNum}, wire ${cWireType}`);
         
         if (tWireType === 7) {
           console.log("  🚨 Telescope is using wire type 7 (deprecated group)!");
@@ -300,11 +300,11 @@ export abstract class BaseWallet {
     }
     
     // Additional check: decode Telescope bytes with CosmJS decoder
-    console.log("\n=== Can CosmJS decode Telescope's bytes? ===");
+    // console.log("\n=== Can CosmJS decode Telescope's bytes? ===");
     try {
       const decodedByCosmJS = cosmjsEncoder.decode(telescopeBytes);
-      console.log("✅ CosmJS can decode Telescope's bytes");
-      console.log("Decoded:", decodedByCosmJS);
+      // console.log("✅ CosmJS can decode Telescope's bytes");
+      // console.log("Decoded:", decodedByCosmJS);
     } catch (e) {
       console.log("❌ CosmJS CANNOT decode Telescope's bytes:", e.message);
     }
@@ -313,7 +313,7 @@ export abstract class BaseWallet {
     const telescopeSorted = new Uint8Array([...telescopeBytes].sort((a, b) => a - b));
     const cosmjsSorted = new Uint8Array([...cosmjsBytes].sort((a, b) => a - b));
     const sameBytes = telescopeSorted.every((val, idx) => val === cosmjsSorted[idx]);
-    console.log("\nSame bytes (ignoring order):", sameBytes);
+    // console.log("\nSame bytes (ignoring order):", sameBytes);
   }
 
   abstract getWalletType(): WalletType;

@@ -55,6 +55,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
 
     // Forward wallet manager events
     this.setupEventForwarding();
+    console.trace('AtlasClient constructor called');
     this.initialize();
   }
 
@@ -104,6 +105,7 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
     type: WalletType, 
     options?: any
   ): Promise<WalletConnection> {
+    console.debug('[ATLAS.JS] <connectWallet>');
     try {
       const connection = await this._walletManager.connect(type, options);
       
@@ -122,7 +124,9 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
   async disconnectWallet(): Promise<void> {
     try {
       await this._walletManager.disconnect();
-      this.emit('walletDisconnected');
+      // walletDisconnected is already emitted by the forwarding from
+      // setupEventForwarding → walletManager's 'disconnected' event.
+      // Do not emit it here again.
     } catch (error) {
       this.emit('error', error);
       throw error;

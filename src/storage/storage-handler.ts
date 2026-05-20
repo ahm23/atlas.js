@@ -31,6 +31,7 @@ import {
 } from './types';
 
 const DEFAULT_STORAGE_GATEWAY = 'https://storage.atlasprotocol.cloud/api/v1';
+const DRIVE_CREATE_GAS_ADJUSTMENT = 2;
 const FOLDER_DELETE_GAS_ADJUSTMENT = 3;
 const SIGNER_SEED = 'Welcome to Atlas Protocol';
 
@@ -104,6 +105,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this._address = client.getCurrentAddress();
 
     this.selectAccount = this.selectAccount.bind(this);
+    this.client.removeAllListeners('walletConnected');
     this.client.on('walletConnected', this.selectAccount);
   }
 
@@ -262,10 +264,20 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Throws `TypeError` for invalid account arguments and `AccountError`
    * when the selected account has no files to view.
    */
+  private reset(): void {
+    this._activeSubscription = undefined;
+    this._drives = [];
+    this._directory = createEmptyDirectory();
+    this.accessKeyPair = undefined;
+    this.accessKeyPairAddress = undefined;
+    this.queuedFiles.clear();
+  }
+
   public async selectAccount(address: string): Promise<void> {
     if (!address) {
       throw new TypeError('Unable to select account. No address specified.');
     }
+    this.reset();
     this._isAuthorized = address === this.client.getCurrentAddress();
     this._address = address;
 
@@ -324,7 +336,9 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       [],
     );
 
-    await this.client.signAndBroadcast([msg]);
+    await this.client.signAndBroadcast([msg], {
+      gasAdjustment: DRIVE_CREATE_GAS_ADJUSTMENT,
+    });
     return contents;
   }
 
@@ -369,6 +383,12 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       ...queuedFile.metadata,
       ...metadata,
     };
+    this.queuedFiles.set(fileKey, queuedFile);
+  }
+
+  public updateQueuedFileReplicas(fileKey: string, replicas: number): void {
+    const queuedFile = this.getQueuedFile(fileKey);
+    queuedFile.replicas = replicas;
     this.queuedFiles.set(fileKey, queuedFile);
   }
 
@@ -422,6 +442,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     await this.client.signAndBroadcast([...postFileMessages, ...postNodeMessages]);
     await this.uploadQueuedFiles(queuedEntries);
+    await this.loadSubscription();
+    // Brief pause so the storage provider's proof has time to land on-chain
+    // before we reload the directory listing.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     await this.reloadDirectory();
   }
 
