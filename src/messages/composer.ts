@@ -15,7 +15,7 @@ export class MessageComposer {
     merkleRoot: Uint8Array,
     fileSize: number,
     replicas: number = 3,
-    subscription: string = "sub_1"
+    subscription: string = ""
   ): EncodeObject {
     // Use the MessageComposer from your protos
     return {

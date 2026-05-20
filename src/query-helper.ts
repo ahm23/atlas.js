@@ -23,7 +23,7 @@ export class QueryHelper implements IQueryHelper {
     return await this.client.atlas.storage.v1.fileStats()
   }
 
-  async subscription(address: string, id: string = "sub_1"): Promise<StorageSubscription> {
+  async subscription(address: string, id: string = ""): Promise<StorageSubscription> {
     const res = await this.client.atlas.storage.v1.subscription({ 
       subscriberAddress: address,
       subscriptionId: id
