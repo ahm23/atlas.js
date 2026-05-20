@@ -2,11 +2,16 @@
 
 export type HashFunction = (data: Uint8Array) => Uint8Array | bigint;
 
+const TREE_GROW_YIELD_INTERVAL = 1000;
+const TREE_GROW_PROGRESS_THROTTLE = 0.5;
+const LEAF_NODE_YIELD_INTERVAL = 10000;
+
 interface MerkleTreeOptions {
   buildLeafMap?: boolean;
   domainSeparation?: boolean;
   reuseHashInputBuffer?: boolean;
   useXXH128?: boolean;
+  onProgress?: (progress: number) => void;
 }
 
 export interface MerkleProof {
@@ -63,6 +68,41 @@ export class MerkleTree {
     this.nodes = result.nodes;
     this.root = result.root;
     this.depth = result.depth;
+  }
+
+  /**
+   * Async factory that builds the tree with periodic event-loop yielding and
+   * throttled progress callbacks, keeping the UI responsive for large trees.
+   */
+  static async buildAsync(
+    input: Uint8Array[],
+    hashFunc: HashFunction,
+    options: MerkleTreeOptions = {},
+  ): Promise<MerkleTree> {
+    if (input.length === 0) {
+      throw new Error("Invalid number of leaves");
+    }
+
+    const tree = Object.create(MerkleTree.prototype);
+    tree.hashFunc = hashFunc;
+    tree.buildLeafMapOnInit = options.buildLeafMap ?? true;
+    tree.domainSeparation = options.domainSeparation ?? false;
+    tree.reuseHashInputBuffer = options.reuseHashInputBuffer ?? false;
+    tree.useXXH128 = options.useXXH128 ?? true;
+    tree.leafCount = input.length;
+    tree.leafMap = new Map();
+    tree.leafMapReady = false;
+
+    const startedAt = performance.now();
+    const result = await tree.growAsync(input, options.onProgress);
+    const growFinishedAt = performance.now();
+    console.debug(
+      `[MerkleTree] Grew tree in ${formatDuration(growFinishedAt - startedAt)} (${tree.leafCount} leaves)`,
+    );
+    tree.nodes = result.nodes;
+    tree.root = result.root;
+    tree.depth = result.depth;
+    return tree;
   }
 
   private computeLeafNodes(input: Uint8Array[]): Uint8Array[] {
@@ -137,6 +177,85 @@ export class MerkleTree {
     };
   }
 
+  private async growAsync(
+    input: Uint8Array[],
+    onProgress?: (progress: number) => void,
+  ): Promise<{ nodes: Uint8Array[][]; root: Uint8Array; depth: number }> {
+    const totalUnits = input.length * 2 - 1; // sproutLeaf per leaf + pair hash per interior node
+    let completedUnits = 0;
+    let nextReportAt = 0;
+
+    const report = (pct: number) => {
+      if (!onProgress) return;
+      if (pct >= nextReportAt) {
+        onProgress(pct);
+        nextReportAt = pct - (pct % TREE_GROW_PROGRESS_THROTTLE) + TREE_GROW_PROGRESS_THROTTLE;
+      }
+    };
+
+    // Phase 1: sproutLeaf for each input leaf
+    this.leaves = new Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      this.leaves[i] = this.sproutLeaf(input[i]);
+      if (this.buildLeafMapOnInit) {
+        this.leafMap.set(bytesToHex(this.leaves[i]), i);
+      }
+      completedUnits++;
+      report((completedUnits / totalUnits) * 100);
+
+      if (i > 0 && i % LEAF_NODE_YIELD_INTERVAL === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    this.leafMapReady = this.buildLeafMapOnInit;
+
+    // Phase 2: grow tree levels
+    const nodes: Uint8Array[][] = [];
+    let level = this.leaves;
+    let reusableHashInput: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+
+    while (level.length > 1) {
+      nodes.push(level);
+
+      const nextLevelSize = (level.length + 1) >> 1;
+      const nextLevel: Uint8Array[] = new Array(nextLevelSize);
+
+      for (let i = 0; i < level.length; i += 2) {
+        if (i + 1 === level.length) {
+          // Odd node: carry up
+          nextLevel[i >> 1] = level[i];
+        } else {
+          // Normal pair: hash together
+          const left = level[i];
+          const right = level[i + 1];
+          const raw = this.combineNodePair(left, right, reusableHashInput);
+
+          if (this.reuseHashInputBuffer && reusableHashInput.length !== raw.length) {
+            reusableHashInput = raw;
+          }
+
+          nextLevel[i >> 1] = this.normalizeHash(this.hashFunc(raw));
+          completedUnits++;
+          report((completedUnits / totalUnits) * 100);
+
+          if (completedUnits % TREE_GROW_YIELD_INTERVAL === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+        }
+      }
+
+      level = nextLevel;
+    }
+
+    nodes.push(level); // Add root level
+
+    return {
+      nodes,
+      root: level[0],
+      depth: nodes.length,
+    };
+  }
+
   private combineNodePair(left: Uint8Array, right: Uint8Array, reusableHashInput: Uint8Array): Uint8Array {
     const prefixBytes = this.domainSeparation ? 1 : 0;
     const requiredLength = prefixBytes + left.length + right.length;
@@ -199,29 +318,22 @@ export class MerkleTree {
       let siblingIdx: number;
       if (isRightChild) {
         siblingIdx = currentIdx - 1;
+        path &= ~(1 << siblingBit);
       } else {
         siblingIdx = currentIdx + 1;
+        path |= (1 << siblingBit);
       }
 
-      if (siblingIdx >= 0 && siblingIdx < levelNodes.length) {
+      siblingBit++;
+
+      if (siblingIdx < levelNodes.length) {
         siblings.push(levelNodes[siblingIdx]);
-        if (isRightChild) {
-          path |= (1 << siblingBit);
-        }
-        siblingBit++;
+      } else {
+        // If sibling doesn't exist, hash with itself
+        siblings.push(levelNodes[currentIdx]);
       }
 
       currentIdx >>= 1;
-    }
-
-    // Handle final level if needed
-    const topLevel = this.nodes[this.depth - 1];
-    if (topLevel.length === 2) {
-      const siblingIdx = currentIdx === 0 ? 1 : 0;
-      siblings.push(topLevel[siblingIdx]);
-      if (currentIdx === 1) {
-        path |= (1 << siblingBit);
-      }
     }
 
     return {
@@ -231,94 +343,44 @@ export class MerkleTree {
     };
   }
 
-  public verifyProof(leafData: Uint8Array, proof: MerkleProof): boolean {
-    const leaf = this.sproutLeaf(leafData);
-    return verifyMerkleProof(leaf, this.root, proof, this.hashFunc, {
-      domainSeparation: this.domainSeparation,
-      useXXH128: this.useXXH128,
-    });
+  public verifyProof(leafData: Uint8Array, proof: MerkleProof, root: Uint8Array): boolean {
+    let current = this.sproutLeaf(leafData);
+    let currentIdx = proof.index;
+
+    for (let i = 0; i < proof.siblings.length; i++) {
+      const sibling = proof.siblings[i];
+      const isRightChild = (currentIdx & 1) === 1;
+
+      let raw: Uint8Array;
+      if (isRightChild) {
+        raw = this.combineNodePair(sibling, current);
+      } else {
+        raw = this.combineNodePair(current, sibling);
+      }
+
+      current = this.normalizeHash(this.hashFunc(raw));
+      currentIdx >>= 1;
+    }
+
+    return bytesToHex(current) === bytesToHex(root);
   }
 
   private ensureLeafMap(): void {
-    if (this.leafMapReady) {
-      return;
+    if (!this.leafMapReady) {
+      for (let i = 0; i < this.leaves.length; i++) {
+        this.leafMap.set(bytesToHex(this.leaves[i]), i);
+      }
+      this.leafMapReady = true;
     }
-
-    for (let i = 0; i < this.leaves.length; i++) {
-      this.leafMap.set(bytesToHex(this.leaves[i]), i);
-    }
-    this.leafMapReady = true;
   }
 }
 
-// Standalone verification function (matches Go's Verify)
-export function verifyMerkleProof(
-  leaf: Uint8Array,
-  root: Uint8Array,
-  proof: MerkleProof,
-  hashFunc: HashFunction,
-  options: {
-    domainSeparation?: boolean;
-    useXXH128?: boolean;
-  } = {}
-): boolean {
-  const domainSeparation = options.domainSeparation ?? false;
-  const useXXH128 = options.useXXH128 ?? true;
-
-  if (proof.siblings.length === 0) {
-    return bytesEqual(leaf, root);
+function bytesToHex(bytes: Uint8Array): string {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
   }
-
-  let result = leaf;
-  let path = proof.path;
-
-  for (const sibling of proof.siblings) {
-    let combined: Uint8Array;
-    const isRightChild = (path & 1) === 1;
-
-    if (domainSeparation) {
-      combined = new Uint8Array(1 + sibling.length + result.length);
-      combined[0] = 0x01; // nodePrefix
-      
-      if (isRightChild) {
-        combined.set(sibling, 1);
-        combined.set(result, 1 + sibling.length);
-      } else {
-        combined.set(result, 1);
-        combined.set(sibling, 1 + result.length);
-      }
-    } else {
-      combined = new Uint8Array(sibling.length + result.length);
-      
-      if (isRightChild) {
-        combined.set(sibling);
-        combined.set(result, sibling.length);
-      } else {
-        combined.set(result);
-        combined.set(sibling, result.length);
-      }
-    }
-
-    const hash = hashFunc(combined);
-    
-    // Normalize hash
-    if (hash instanceof Uint8Array) {
-      result = hash;
-    } else {
-      result = bigintToBytes(hash, useXXH128 ? 16 : 8);
-    }
-
-    path >>= 1;
-  }
-
-  return bytesEqual(result, root);
-}
-
-// Utility functions
-export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  return hex;
 }
 
 export function hexToBytes(hex: string): Uint8Array {
@@ -329,36 +391,14 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-const UINT64_MASK = (1n << 64n) - 1n;
-
 function bigintToBytes(value: bigint, byteLength: number): Uint8Array {
+  const hex = value.toString(16).padStart(byteLength * 2, '0').slice(0, byteLength * 2);
   const bytes = new Uint8Array(byteLength);
-  const view = new DataView(bytes.buffer);
 
-  if (byteLength === 16) {
-    view.setBigUint64(0, value >> 64n, false);
-    view.setBigUint64(8, value & UINT64_MASK, false);
-    return bytes;
+  for (let i = 0; i < byteLength; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
 
-  if (byteLength === 8) {
-    view.setBigUint64(0, value & UINT64_MASK, false);
-    return bytes;
-  }
-
-  let v = value;
-  for (let i = byteLength - 1; i >= 0; i--) {
-    bytes[i] = Number(v & 0xFFn);
-    v >>= 8n;
-  }
   return bytes;
 }
 

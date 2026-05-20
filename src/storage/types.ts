@@ -23,9 +23,24 @@ export interface IQueuedFile {
   replicas: number
 
   encryption?: IEncryptionOptions
-  
+
   status: string
+  progress?: number
   abortController?: AbortController;
+}
+
+export type FileProcessingStage =
+  | 'idle'
+  | 'encrypting'
+  | 'merkling'
+  | 'ready'
+  | 'uploading'
+  | 'uploaded'
+  | 'error';
+
+export interface IFileProcessingProgress {
+  stage: FileProcessingStage;
+  progress: number;
 }
 
 export interface IStagedFile extends IQueuedFile {

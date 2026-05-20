@@ -3,7 +3,7 @@ import Blake3Worker from "./blake3-worker?worker&inline";
 import { h_blake3, h_xxh3 } from "./hash";
 
 const DEFAULT_CHUNK_SIZE = 1024;
-const LEAF_HASH_YIELD_INTERVAL = 8192;
+const LEAF_HASH_YIELD_INTERVAL = 1024;
 const LEAF_HASH_BYTE_LENGTH = 32;
 const BLAKE3_WORKER_BATCH_BYTES = 16 * 1024 * 1024;
 const BLAKE3_WORKER_MIN_FILE_BYTES = 4 * 1024 * 1024;
@@ -14,6 +14,14 @@ interface LeafHashResult {
   leafHashes: Uint8Array[];
   yieldCount: number;
   workerCount: number;
+}
+
+export interface MerkleTreeBuildProgress {
+  progress: number;
+}
+
+interface MerkleTreeBuildOptions {
+  onProgress?: (progress: MerkleTreeBuildProgress) => void;
 }
 
 interface Blake3WorkerResponse {
@@ -27,10 +35,13 @@ interface Blake3WorkerJob {
   leafStart: number;
 }
 
+const LEAF_HASHING_WEIGHT = 40;
+
 export async function buildFileMerkleTree(
   bytes: Blob,
   signal: AbortSignal,
-  chunkSize: number = DEFAULT_CHUNK_SIZE
+  chunkSize: number = DEFAULT_CHUNK_SIZE,
+  options: MerkleTreeBuildOptions = {},
 ): Promise<MerkleTree> {
   if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
     throw new Error("chunkSize must be a positive integer");
@@ -42,18 +53,29 @@ export async function buildFileMerkleTree(
     `[MerkleTree] Hashing ${bytes.size} bytes into ${chunkSize}-byte leaves`,
   );
 
-  const { leafHashes, yieldCount, workerCount } = await hashFileLeaves(bytes, signal, chunkSize);
+  // Scale leaf hashing progress (0–100% internally) to 0–LEAF_HASHING_WEIGHT%
+  // so tree-building gets the remaining (LEAF_HASHING_WEIGHT–100)%.
+  const leafOptions: MerkleTreeBuildOptions = options.onProgress
+    ? { onProgress: (p) => options.onProgress!({ progress: (p.progress / 100) * LEAF_HASHING_WEIGHT }) }
+    : {};
+
+  const { leafHashes, yieldCount, workerCount } = await hashFileLeaves(bytes, signal, chunkSize, leafOptions);
   const leafHashFinishedAt = performance.now();
   console.debug(
     `[MerkleTree] Hashed ${leafHashes.length} leaves in ${formatDuration(leafHashFinishedAt - startedAt)} (${workerCount > 0 ? `${workerCount} workers` : `${yieldCount} yields`})`,
   );
 
   const treeStartedAt = performance.now();
-  const tree = new MerkleTree(leafHashes, h_xxh3, {
+  const tree = await MerkleTree.buildAsync(leafHashes, h_xxh3, {
     buildLeafMap: false,
     domainSeparation: false,
     reuseHashInputBuffer: true,
     useXXH128: true,
+    onProgress: (treeProgress) => {
+      options.onProgress?.({
+        progress: LEAF_HASHING_WEIGHT + (treeProgress / 100) * (100 - LEAF_HASHING_WEIGHT),
+      });
+    },
   });
   console.debug(
     `[MerkleTree] Built ${tree.nodes.length} levels/${tree.leafCount} leaves in ${formatDuration(performance.now() - treeStartedAt)}`,
@@ -69,10 +91,11 @@ async function hashFileLeaves(
   bytes: Blob,
   signal: AbortSignal,
   chunkSize: number,
+  options: MerkleTreeBuildOptions,
 ): Promise<LeafHashResult> {
   if (canUseBlake3Workers(bytes)) {
     try {
-      return await hashFileLeavesWithWorkers(bytes, signal, chunkSize);
+      return await hashFileLeavesWithWorkers(bytes, signal, chunkSize, options);
     } catch (error) {
       if (signal.aborted) {
         throw error;
@@ -82,7 +105,7 @@ async function hashFileLeaves(
     }
   }
 
-  return hashFileLeavesOnMainThread(bytes, signal, chunkSize);
+  return hashFileLeavesOnMainThread(bytes, signal, chunkSize, options);
 }
 
 function canUseBlake3Workers(bytes: Blob): boolean {
@@ -94,6 +117,7 @@ async function hashFileLeavesWithWorkers(
   bytes: Blob,
   signal: AbortSignal,
   chunkSize: number,
+  options: MerkleTreeBuildOptions,
 ): Promise<LeafHashResult> {
   const batchSize = Math.max(
     chunkSize,
@@ -106,6 +130,7 @@ async function hashFileLeavesWithWorkers(
   const activeJobs = new Map<number, Blake3WorkerJob>();
   let nextJobId = 0;
   let completedJobs = 0;
+  let completedLeaves = 0;
 
   return new Promise<LeafHashResult>((resolve, reject) => {
     let settled = false;
@@ -133,6 +158,7 @@ async function hashFileLeavesWithWorkers(
       }
 
       settled = true;
+      reportMerkleProgress(options, bytes.size, chunkSize, leafHashes.length);
       cleanup();
       resolve({
         leafHashes,
@@ -211,6 +237,8 @@ async function hashFileLeavesWithWorkers(
           const hashStart = i * LEAF_HASH_BYTE_LENGTH;
           leafHashes[job.leafStart + i] = jobHashes.subarray(hashStart, hashStart + LEAF_HASH_BYTE_LENGTH);
         }
+        completedLeaves += leafCount;
+        reportMerkleProgress(options, bytes.size, chunkSize, completedLeaves);
 
         completedJobs++;
         if (completedJobs === jobCount) {
@@ -281,6 +309,7 @@ async function hashFileLeavesOnMainThread(
   bytes: Blob,
   signal: AbortSignal,
   chunkSize: number,
+  options: MerkleTreeBuildOptions,
 ): Promise<LeafHashResult> {
   const leafHashes: Uint8Array[] = [];
   const stream = bytes.stream();
@@ -306,6 +335,7 @@ async function hashFileLeavesOnMainThread(
 
             if ((leafHashes.length & (LEAF_HASH_YIELD_INTERVAL - 1)) === 0) {
               yieldCount++;
+              reportMerkleProgress(options, bytes.size, chunkSize, leafHashes.length);
               await new Promise((resolve) => setTimeout(resolve, 0));
             }
 
@@ -326,6 +356,7 @@ async function hashFileLeavesOnMainThread(
 
           if ((leafHashes.length & (LEAF_HASH_YIELD_INTERVAL - 1)) === 0) {
             yieldCount++;
+            reportMerkleProgress(options, bytes.size, chunkSize, leafHashes.length);
             await new Promise((resolve) => setTimeout(resolve, 0));
           }
         }
@@ -336,6 +367,7 @@ async function hashFileLeavesOnMainThread(
           const finalHash = h_blake3(chunkBuffer.subarray(0, chunkOffset));
           leafHashes.push(finalHash);
         }
+        reportMerkleProgress(options, bytes.size, chunkSize, leafHashes.length);
         break;
       }
     }
@@ -348,6 +380,22 @@ async function hashFileLeavesOnMainThread(
     yieldCount,
     workerCount: 0,
   };
+}
+
+function reportMerkleProgress(
+  options: MerkleTreeBuildOptions,
+  bytesSize: number,
+  chunkSize: number,
+  completedLeaves: number,
+): void {
+  if (!options.onProgress) {
+    return;
+  }
+
+  const totalLeaves = Math.max(1, Math.ceil(bytesSize / chunkSize));
+  const pct = Math.min(100, (completedLeaves / totalLeaves) * 100);
+
+  options.onProgress({ progress: pct });
 }
 
 function formatDuration(milliseconds: number): string {

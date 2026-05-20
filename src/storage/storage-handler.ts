@@ -24,6 +24,7 @@ import {
   IDirectoryNodeContents,
   IEncryptionOptions,
   IFileMetadata,
+  IFileProcessingProgress,
   IFileUploadOptions,
   IQueuedFile,
   ITreeNodeContents,
@@ -61,6 +62,7 @@ export class SubscriptionError extends Error {
 }
 
 export enum FileProcessingEvent {
+  PROGRESS = 'file:progress',
   ENCRYPTED = 'file:encrypted',
   MERKLE_BUILT = 'file:merkle-built',
   READY = 'file:ready',
@@ -351,6 +353,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     };
 
     this.queuedFiles.set(file.name, queuedFile);
+    this.emitFileProcessingProgress(file.name, {
+      stage: 'idle',
+      progress: 0,
+    });
     await this.processFile(file.name);
   }
 
@@ -667,21 +673,45 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
         console.debug(
           `[StorageHandler] Encrypting "${fileKey}" (${queuedFile.file.size} bytes, chunkSize=${queuedFile.encryption.chunkSize ?? DEFAULT_ENCYRPTION_CHUNK_SIZE})`,
         );
-        queuedFile.file = await encryptFile(queuedFile.file, queuedFile.encryption, abortController.signal);
-        console.debug(
-          `[StorageHandler] Encrypted "${fileKey}" in ${formatDuration(performance.now() - encryptStartedAt)} (${queuedFile.file.size} encrypted bytes)`,
-        );
+        this.emitFileProcessingProgress(fileKey, {
+          stage: 'encrypting',
+          progress: 0,
+        });
+        queuedFile.file = await encryptFile(queuedFile.file, queuedFile.encryption, abortController.signal, (pct) => {
+          this.emitFileProcessingProgress(fileKey, {
+            stage: 'encrypting',
+            progress: pct / 2,
+          });
+        });
+        console.debug(`[StorageHandler] Encrypted "${fileKey}" in ${formatDuration(performance.now() - encryptStartedAt)} (${queuedFile.file.size} encrypted bytes)`);
         this.emit(FileProcessingEvent.ENCRYPTED, fileKey, { fileSize: queuedFile.file.size });
       }
 
       this.updateQueuedFileStatus(fileKey, 'merkling');
       const merkleStartedAt = performance.now();
       console.debug(`[StorageHandler] Building merkle tree for "${fileKey}" (${queuedFile.file.size} bytes)`);
-      const tree = await buildFileMerkleTree(queuedFile.file, abortController.signal);
+      const progressBase = queuedFile.encryption ? 50 : 0;
+      const progressRange = queuedFile.encryption ? 50 : 100;
+      this.emitFileProcessingProgress(fileKey, {
+        stage: 'merkling',
+        progress: progressBase,
+      });
+      const tree = await buildFileMerkleTree(queuedFile.file, abortController.signal, undefined, {
+        onProgress: (mkProgress) => {
+          this.emitFileProcessingProgress(fileKey, {
+            stage: 'merkling',
+            progress: progressBase + (mkProgress.progress / 100) * progressRange,
+          });
+        },
+      });
       console.debug(
         `[StorageHandler] Built merkle tree for "${fileKey}" in ${formatDuration(performance.now() - merkleStartedAt)} (${tree.nodes.length} nodes)`,
       );
       queuedFile.merkleRoot = tree.root;
+      this.emitFileProcessingProgress(fileKey, {
+        stage: 'merkling',
+        progress: progressBase + progressRange,
+      });
       this.emit(FileProcessingEvent.MERKLE_BUILT, fileKey, { merkleRoot: bytesToHex(queuedFile.merkleRoot) });
 
       queuedFile.fid = await buildFid(queuedFile.merkleRoot, this._address, queuedFile.nonce);
@@ -689,6 +719,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       throwIfAborted(abortController.signal);
 
       this.updateQueuedFileStatus(fileKey, 'ready');
+      this.emitFileProcessingProgress(fileKey, {
+        stage: 'ready',
+        progress: 100,
+      });
       console.debug(`[StorageHandler] Processed "${fileKey}" in ${formatDuration(performance.now() - processStartedAt)}`);
       this.emit(FileProcessingEvent.READY, fileKey);
     } catch (error) {
@@ -711,6 +745,10 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     }
 
     this.updateQueuedFileStatus(fileKey, 'error');
+    this.emitFileProcessingProgress(fileKey, {
+      stage: 'error',
+      progress: 0,
+    });
     const message = error instanceof Error ? error.message : 'Unknown file processing error.';
     this.emit(FileProcessingEvent.ERROR, fileKey, message);
   }
@@ -722,6 +760,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     const queuedFile = this.getQueuedFile(fileKey);
     queuedFile.status = status;
     this.queuedFiles.set(fileKey, queuedFile);
+  }
+
+  private emitFileProcessingProgress(fileKey: string, progress: IFileProcessingProgress): void {
+    const queuedFile = this.queuedFiles.get(fileKey);
+
+    if (queuedFile) {
+      queuedFile.progress = progress.progress;
+      this.queuedFiles.set(fileKey, queuedFile);
+    }
+
+    this.emit(FileProcessingEvent.PROGRESS, fileKey, progress);
   }
 
   /**
@@ -802,13 +851,15 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     await Promise.all(
       queuedEntries.map(async ([fileKey, queuedFile]) => {
         this.updateQueuedFileStatus(fileKey, 'uploading');
-        const result = await UploadHelper.upload(DEFAULT_STORAGE_GATEWAY, queuedFile.fid, queuedFile.file, null);
+        this.emitFileProcessingProgress(fileKey, { stage: 'uploading', progress: 0 });
+        const result = await UploadHelper.upload(DEFAULT_STORAGE_GATEWAY, queuedFile.fid, queuedFile.file);
         if (!result.success) {
           this.updateQueuedFileStatus(fileKey, 'error');
           throw new Error(result.message ?? `Failed to upload file "${fileKey}".`);
         }
 
         this.updateQueuedFileStatus(fileKey, 'uploaded');
+        this.emitFileProcessingProgress(fileKey, { stage: 'uploaded', progress: 100 });
         this.queuedFiles.delete(fileKey);
       }),
     );
@@ -933,7 +984,12 @@ function formatDuration(milliseconds: number): string {
     : `${(milliseconds / 1000).toFixed(2)}s`;
 }
 
-async function encryptFile(file: File, opts: IEncryptionOptions, signal: AbortSignal): Promise<File> {
+async function encryptFile(
+  file: File,
+  opts: IEncryptionOptions,
+  signal: AbortSignal,
+  onProgress?: (progress: number) => void,
+): Promise<File> {
   if (!opts.aes) {
     throw new Error('AES key and iv are required in the encryption options.');
   }
@@ -948,6 +1004,9 @@ async function encryptFile(file: File, opts: IEncryptionOptions, signal: AbortSi
       new Blob([(blobChunk.size + 16).toString().padStart(8, '0')]),
       await aesBlobCrypt(blobChunk, opts.aes, 'encrypt'),
     );
+
+    const bytesProcessed = Math.min(file.size, i + blobChunk.size);
+    onProgress?.((bytesProcessed / file.size) * 100);
   }
 
   return new File(encryptedBytes, file.name, {
