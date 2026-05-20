@@ -2,9 +2,9 @@
 
 export type HashFunction = (data: Uint8Array) => Uint8Array | bigint;
 
-const TREE_GROW_YIELD_INTERVAL = 1000;
+const TREE_GROW_YIELD_INTERVAL = 50000;
 const TREE_GROW_PROGRESS_THROTTLE = 0.5;
-const LEAF_NODE_YIELD_INTERVAL = 10000;
+const LEAF_NODE_YIELD_INTERVAL = 50000;
 
 interface MerkleTreeOptions {
   buildLeafMap?: boolean;
@@ -12,6 +12,7 @@ interface MerkleTreeOptions {
   reuseHashInputBuffer?: boolean;
   useXXH128?: boolean;
   onProgress?: (progress: number) => void;
+  signal?: AbortSignal;
 }
 
 export interface MerkleProof {
@@ -94,7 +95,7 @@ export class MerkleTree {
     tree.leafMapReady = false;
 
     const startedAt = performance.now();
-    const result = await tree.growAsync(input, options.onProgress);
+    const result = await tree.growAsync(input, options.onProgress, options.signal);
     const growFinishedAt = performance.now();
     console.debug(
       `[MerkleTree] Grew tree in ${formatDuration(growFinishedAt - startedAt)} (${tree.leafCount} leaves)`,
@@ -180,6 +181,7 @@ export class MerkleTree {
   private async growAsync(
     input: Uint8Array[],
     onProgress?: (progress: number) => void,
+    signal?: AbortSignal,
   ): Promise<{ nodes: Uint8Array[][]; root: Uint8Array; depth: number }> {
     const totalUnits = input.length * 2 - 1; // sproutLeaf per leaf + pair hash per interior node
     let completedUnits = 0;
@@ -204,10 +206,13 @@ export class MerkleTree {
       report((completedUnits / totalUnits) * 100);
 
       if (i > 0 && i % LEAF_NODE_YIELD_INTERVAL === 0) {
+        if (signal?.aborted) throw new Error('Cancelled');
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
     this.leafMapReady = this.buildLeafMapOnInit;
+
+    if (signal?.aborted) throw new Error('Cancelled');
 
     // Phase 2: grow tree levels
     const nodes: Uint8Array[][] = [];
@@ -239,10 +244,13 @@ export class MerkleTree {
           report((completedUnits / totalUnits) * 100);
 
           if (completedUnits % TREE_GROW_YIELD_INTERVAL === 0) {
+            if (signal?.aborted) throw new Error('Cancelled');
             await new Promise((resolve) => setTimeout(resolve, 0));
           }
         }
       }
+
+      if (signal?.aborted) throw new Error('Cancelled');
 
       level = nextLevel;
     }

@@ -3,7 +3,7 @@ import Blake3Worker from "./blake3-worker?worker&inline";
 import { h_blake3, h_xxh3 } from "./hash";
 
 const DEFAULT_CHUNK_SIZE = 1024;
-const LEAF_HASH_YIELD_INTERVAL = 1024;
+const LEAF_HASH_YIELD_INTERVAL = 8192;
 const LEAF_HASH_BYTE_LENGTH = 32;
 const BLAKE3_WORKER_BATCH_BYTES = 16 * 1024 * 1024;
 const BLAKE3_WORKER_MIN_FILE_BYTES = 4 * 1024 * 1024;
@@ -65,12 +65,17 @@ export async function buildFileMerkleTree(
     `[MerkleTree] Hashed ${leafHashes.length} leaves in ${formatDuration(leafHashFinishedAt - startedAt)} (${workerCount > 0 ? `${workerCount} workers` : `${yieldCount} yields`})`,
   );
 
+  if (signal.aborted) {
+    throw new Error('Cancelled');
+  }
+
   const treeStartedAt = performance.now();
   const tree = await MerkleTree.buildAsync(leafHashes, h_xxh3, {
     buildLeafMap: false,
     domainSeparation: false,
     reuseHashInputBuffer: true,
     useXXH128: true,
+    signal,
     onProgress: (treeProgress) => {
       options.onProgress?.({
         progress: LEAF_HASHING_WEIGHT + (treeProgress / 100) * (100 - LEAF_HASHING_WEIGHT),

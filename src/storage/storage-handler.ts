@@ -727,15 +727,31 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       this.emit(FileProcessingEvent.READY, fileKey);
     } catch (error) {
       console.debug(`[StorageHandler] Failed processing "${fileKey}" after ${formatDuration(performance.now() - processStartedAt)}`);
-      this.handleFileProcessingError(fileKey, error);
+      this.handleFileProcessingError(fileKey, error, abortController);
     }
   }
 
   /**
    * Normalize file processing failures into queue status and events.
    */
-  private handleFileProcessingError(fileKey: string, error: unknown): void {
-    if (error instanceof CancellationException || this.queuedFiles.get(fileKey)?.abortController?.signal.aborted) {
+  private handleFileProcessingError(fileKey: string, error: unknown, originalController?: AbortController): void {
+    if (error instanceof CancellationException) {
+      // Only delete if the queued entry still belongs to this processing run.
+      // If the file was re-queued (e.g. encryption toggled), a new AbortController
+      // was assigned — deleting it would kill the new task.
+      if (!originalController || this.queuedFiles.get(fileKey)?.abortController === originalController) {
+        this.queuedFiles.delete(fileKey);
+      }
+      return;
+    }
+
+    // If the file was re-queued since this processing run started, the error
+    // belongs to the old task.  Don't touch the new entry.
+    if (originalController && this.queuedFiles.get(fileKey)?.abortController !== originalController) {
+      return;
+    }
+
+    if (this.queuedFiles.get(fileKey)?.abortController?.signal.aborted) {
       this.queuedFiles.delete(fileKey);
       return;
     }
@@ -768,9 +784,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     if (queuedFile) {
       queuedFile.progress = progress.progress;
       this.queuedFiles.set(fileKey, queuedFile);
+      this.emit(FileProcessingEvent.PROGRESS, fileKey, progress);
     }
-
-    this.emit(FileProcessingEvent.PROGRESS, fileKey, progress);
   }
 
   /**
