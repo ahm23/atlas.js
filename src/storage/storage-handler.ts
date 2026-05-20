@@ -850,7 +850,8 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       meta: {
         ...queuedFile.metadata,
         name: queuedFile.metadata?.name ?? file.name,
-        type: queuedFile.metadata?.type ?? file.type,
+        type: file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : file.type,
+        mime: file.type,
         size: queuedFile.metadata?.size ?? file.size,
         lastModified: queuedFile.metadata?.lastModified ?? file.lastModified,
       },
