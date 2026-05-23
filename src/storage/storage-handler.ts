@@ -30,7 +30,7 @@ import {
   ITreeNodeContents,
 } from './types';
 
-const DEFAULT_STORAGE_GATEWAY = 'https://storage.atlasprotocol.cloud/api/v1';
+const DEFAULT_STORAGE_GATEWAY = 'storage.atlasprotocol.cloud';
 const DRIVE_CREATE_GAS_ADJUSTMENT = 2;
 const FOLDER_DELETE_GAS_ADJUSTMENT = 3;
 const SIGNER_SEED = 'Welcome to Atlas Protocol';
@@ -443,9 +443,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     await this.client.signAndBroadcast([...postFileMessages, ...postNodeMessages]);
     await this.uploadQueuedFiles(queuedEntries);
     await this.loadSubscription();
-    // Brief pause so the storage provider's proof has time to land on-chain
-    // before we reload the directory listing.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
     await this.reloadDirectory();
   }
 
@@ -475,6 +472,46 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     const aes = await this.extractAesKey(nodeDetails.viewers);
     return ensureNonEmptyFile(await decryptChunkedFile(rawFile, nodeContents.meta.name, nodeContents.meta, aes));
+  }
+
+  /**
+   * Re-upload a file that was committed on-chain but failed to reach the storage
+   * provider. For encrypted files the original AES key is restored from the
+   * tree node's authority bundles so the encrypted bytes match the on-chain FID.
+   */
+  public async reuploadFile(
+    file: File,
+    fid: string,
+    encrypted: boolean,
+    basepath: string = this.directory.path,
+    providerHostname?: string,
+    onProgress?: (progress: number, stage?: string) => void,
+  ): Promise<void> {
+    const provider = providerHostname ?? DEFAULT_STORAGE_GATEWAY;
+
+    let uploadFile: File;
+
+    if (encrypted) {
+      const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._address);
+      if (!nodeDetails || nodeDetails.nodeType !== 'file') {
+        throw new Error(`Node "${joinPath(basepath, fid)}" is not a file.`);
+      }
+      const aes = await this.extractAesKey(nodeDetails.viewers);
+      onProgress?.(0, 'encrypting');
+      uploadFile = await encryptFile(file, { aes }, new AbortController().signal, (pct) => {
+        onProgress?.(pct, 'encrypting');
+      });
+    } else {
+      uploadFile = file;
+    }
+
+    onProgress?.(0, 'uploading');
+    const result = await UploadHelper.upload(provider, fid, uploadFile, (pct) => {
+      onProgress?.(pct, 'uploading');
+    });
+    if (!result.success) {
+      throw new Error(result.message ?? `Failed to re-upload file "${file.name}".`);
+    }
   }
 
   /**

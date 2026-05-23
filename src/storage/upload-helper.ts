@@ -68,7 +68,8 @@ export class UploadHelper {
     formData.append('fid', fileId);
 
     try {
-      const response = await axios.post(`${hostname}/upload`, formData, {
+      const response = await axios.post(`https://${hostname}/api/v1/upload`, formData, {
+        timeout: 5 * 60 * 1000,
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -81,7 +82,6 @@ export class UploadHelper {
             onProgress(progress);
           }
         },
-        timeout: 30000, // 30 second timeout
       });
 
       return {
