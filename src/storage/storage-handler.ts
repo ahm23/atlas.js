@@ -137,7 +137,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * True when the selected storage account matches the connected wallet.
    */
   public get isAuthorized(): boolean {
-    return this._isAuthorized;
+    return this.accessKeyPair !== undefined;
   }
 
   /**
@@ -188,8 +188,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Emits `NEW_SUB` when found and `NO_SUB` when the query fails.
    */
   public async loadSubscription(id?: string): Promise<void> {
-    this.validateAuthority();
-
     try {
       this._activeSubscription = await this.client.query.subscription(this._address, id);
       this.emit(StorageHandlerEvent.NEW_SUB, this._activeSubscription);
@@ -278,15 +276,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       throw new TypeError('Unable to select account. No address specified.');
     }
     this.reset();
-    this._isAuthorized = address === this.client.getCurrentAddress();
     this._address = address;
 
-    if (this._isAuthorized && (!this.accessKeyPair || this.accessKeyPairAddress !== address)) {
-      await this.enableFullSigner();
-    }
-
-    if (this._isAuthorized) {
+    if (address === this.client.getCurrentAddress()) {
       await this.loadSubscription();
+      if (!this._activeSubscription) {
+        return
+      }
+
+      if (!this.accessKeyPair || this.accessKeyPairAddress !== address) {
+        await this.enableFullSigner();
+      }
     }
 
     const drives = await this.findDrives(address);
@@ -643,8 +643,6 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * The minimum purchase is one gigabyte for one day.
    */
   public async purchaseSubscription(bytes: number, days: number, address: string = this._address): Promise<string> {
-    this.validateAuthority();
-
     if (bytes < 1024 ** 3) {
       throw new Error('Cannot purchase less than 1GB of storage.');
     }
@@ -709,6 +707,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     this.accessKeyPair = PrivateKey.fromHex(await stringToShaHex(signature));
     this.accessKeyPairAddress = address;
+    
   }
 
   /**
