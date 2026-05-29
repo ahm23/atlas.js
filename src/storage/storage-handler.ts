@@ -948,7 +948,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   private async download(fid: string, provider: string, fileName: string, fileMeta: FilePropertyBag): Promise<File> {
     await this.client.query.provider(provider);
-    const response = await fetch(`${DEFAULT_STORAGE_GATEWAY}/download/${fid}`, { method: 'GET' });
+    const response = await fetch(`https://${DEFAULT_STORAGE_GATEWAY}/api/v1/download/${fid}`, { method: 'GET' });
 
     if (!response.ok) {
       throw new Error(`Failed to download file "${fid}": ${response.status} ${response.statusText}`);
