@@ -212,7 +212,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       throw new TypeError('Unable to load directory. No owner specified and no wallet connected.');
     }
 
-    const dir = await this.client.query.treeNode(path, owner);
+    const dir = await this.client.query.treeNode(path, this._activeSubscription.id, owner);
     if (!dir) {
       throw new DirectoryLoadError(`Directory node "${path}" was not found for owner "${owner}".`);
     }
@@ -227,7 +227,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       subdirs: [],
       objects: [],
     };
-    const children: TreeNode[] = await this.client.query.treeNodeChildren(path, owner) ?? [];
+    const children: TreeNode[] = await this.client.query.treeNodeChildren(path, this._activeSubscription.id, owner) ?? [];
     for (const [index, node] of children.entries()) {
       try {
         if (node.nodeType === 'directory') {
@@ -308,7 +308,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Find all drive nodes owned by an address.
    */
   private async findDrives(address: string): Promise<IAtlasDriveInfo[]> {
-    const nodes = await this.client.query.treeNodeChildren('', address) ?? [];
+    const nodes = await this.client.query.treeNodeChildren('', this._activeSubscription.id, address) ?? [];
     // [TODO]: logic will change once encryting node contents is implemented
     return nodes
       .filter((node) => node.nodeType === 'drive')
@@ -329,6 +329,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     const msg = MessageComposer.MsgPostNode(
       this._address,
+      this._activeSubscription.id,
       name,
       'drive',
       JSON.stringify(contents),
@@ -431,6 +432,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       postNodeMessages.push(
         MessageComposer.MsgPostNode(
           this._address,
+          this._activeSubscription.id,
           contents.path,
           'file',
           JSON.stringify(contents),
@@ -453,7 +455,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * the filetree node.
    */
   public async downloadFile(fid: string, basepath: string = this.directory.path): Promise<File> {
-    const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._address);
+    const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._activeSubscription.id, this._address);
     if (!nodeDetails || nodeDetails.nodeType !== 'file') {
       throw new Error(`Node "${joinPath(basepath, fid)}" is not a file.`);
     }
@@ -492,7 +494,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     let uploadFile: File;
 
     if (encrypted) {
-      const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._address);
+      const nodeDetails = await this.client.query.treeNode(joinPath(basepath, fid), this._activeSubscription.id, this._address);
       if (!nodeDetails || nodeDetails.nodeType !== 'file') {
         throw new Error(`Node "${joinPath(basepath, fid)}" is not a file.`);
       }
@@ -565,7 +567,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
     this.validateAuthority();
 
     const txResult = await this.client.signAndBroadcast([
-      MessageComposer.MsgDeleteNode(this._address, path),
+      MessageComposer.MsgDeleteNode(this._address, this._activeSubscription.id, path),
     ], {
       gasAdjustment: FOLDER_DELETE_GAS_ADJUSTMENT,
       ...options,
@@ -629,7 +631,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     const msgs: EncodeObject[] = [
       await this.incrementDirectoryItemCount(basepath, 1),
-      MessageComposer.MsgPostNode(this._address, path, 'directory', JSON.stringify(contents), [], []),
+      MessageComposer.MsgPostNode(this._address, this._activeSubscription.id, path, 'directory', JSON.stringify(contents), [], []),
     ];
 
     const txResult = await this.client.signAndBroadcast(msgs);
@@ -961,7 +963,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    */
   private buildDeleteFileMessages(fid: string, basepath: string): EncodeObject[] {
     return [
-      MessageComposer.MsgDeleteNode(this._address, joinPath(basepath, fid)),
+      MessageComposer.MsgDeleteNode(this._address, this._activeSubscription.id, joinPath(basepath, fid)),
       MessageComposer.MsgDeleteFile(this._address, fid),
     ];
   }
@@ -970,7 +972,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
    * Build a replacement directory node with an adjusted child item count.
    */
   private async incrementDirectoryItemCount(path: string, inc: number): Promise<EncodeObject> {
-    const folderNode = await this.client.query.treeNode(path, this._address);
+    const folderNode = await this.client.query.treeNode(path, this._activeSubscription.id, this._address);
     if (!folderNode) {
       throw new Error(`Directory "${path}" does not exist.`);
     }
@@ -981,6 +983,7 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
 
     return MessageComposer.MsgPostNode(
       this._address,
+      this._activeSubscription.id,
       path,
       folderNode.nodeType,
       JSON.stringify(folderContents),

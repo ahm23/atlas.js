@@ -59,6 +59,6 @@ export class QueryHelper implements IQueryHelper {
     return res.provider
   }
 
-  treeNode          = async (path: string, owner: string): Promise<TreeNode> => (await this.client.atlas.filetree.v1.treeNode({ path, owner })).node
-  treeNodeChildren  = async (path: string, owner: string) => (await this.client.atlas.filetree.v1.treeNodeChildren({ path, owner })).nodes
+  treeNode          = async (path: string, subscription: string, owner: string): Promise<TreeNode> => (await this.client.atlas.filetree.v1.treeNode({ path, subscription, owner })).node
+  treeNodeChildren  = async (path: string, subscription: string, owner: string) => (await this.client.atlas.filetree.v1.treeNodeChildren({ path, subscription, owner })).nodes
 }

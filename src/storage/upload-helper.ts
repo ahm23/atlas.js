@@ -64,8 +64,10 @@ export class UploadHelper {
     onProgress?: (progress: number) => void
   ): Promise<UploadResult> {
     const formData = new FormData();
-    formData.append('file', file);
+    // fid must be appended before the file part so the streaming parser
+    // on the provider sees it before breaking out of the multipart loop.
     formData.append('fid', fileId);
+    formData.append('file', file);
 
     try {
       const response = await axios.post(`https://${hostname}/api/v1/upload`, formData, {

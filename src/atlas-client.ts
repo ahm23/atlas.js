@@ -80,11 +80,9 @@ export class AtlasClient extends EventEmitter implements IAtlasClient {
     if (this._isInitialized) return;
 
     try {
-      // For now, just mark as initialized
-      this._isInitialized = true;
-
       this.queryClient = await atlas.ClientFactory.createRPCQueryClient({rpcEndpoint: this._config.rpcEndpoint})
       this._queryHelper = new QueryHelper(this.queryClient)
+      this._isInitialized = true;
 
       this.emit(ClientEvent.INITIALIZED, {
         client: this,

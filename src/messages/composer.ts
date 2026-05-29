@@ -48,11 +48,12 @@ export class MessageComposer {
   /**
    * Creates a file tree node message
    */
-  static MsgPostNode(creator: string, path: string, nodeType: string, contents: string, viewers: AuthorityBundle[], editors: AuthorityBundle[]): EncodeObject {
+  static MsgPostNode(creator: string, subscription: string, path: string, nodeType: string, contents: string, viewers: AuthorityBundle[], editors: AuthorityBundle[]): EncodeObject {
     return {
       typeUrl: MsgPostNode.typeUrl,
       value: MsgPostNode.fromPartial({
         creator,
+        subscription,
         path,
         nodeType,
         contents,
@@ -62,11 +63,12 @@ export class MessageComposer {
     };
   }
 
-  static MsgDeleteNode(creator: string, path: string): EncodeObject {
+  static MsgDeleteNode(creator: string, subscription: string, path: string): EncodeObject {
     return {
       typeUrl: MsgDeleteNode.typeUrl,
       value: MsgDeleteNode.fromPartial({
         creator,
+        subscription,
         path: path.toLowerCase()
       })
     };
