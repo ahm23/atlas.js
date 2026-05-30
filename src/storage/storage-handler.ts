@@ -467,13 +467,17 @@ export class StorageHandler extends EventEmitter implements IStorageHandler {
       throw new Error(`File "${fid}" does not have an assigned storage provider.`);
     }
 
-    const rawFile = await this.download(fid, provider, nodeContents.meta.name, nodeContents.meta);
+    const fileMeta: FilePropertyBag = {
+      ...nodeContents.meta,
+      type: (nodeContents.meta as Record<string, string>).mime ?? nodeContents.meta.type,
+    };
+    const rawFile = await this.download(fid, provider, nodeContents.meta.name, fileMeta);
     if (!nodeContents.encrypted) {
       return ensureNonEmptyFile(rawFile);
     }
 
     const aes = await this.extractAesKey(nodeDetails.viewers);
-    return ensureNonEmptyFile(await decryptChunkedFile(rawFile, nodeContents.meta.name, nodeContents.meta, aes));
+    return ensureNonEmptyFile(await decryptChunkedFile(rawFile, nodeContents.meta.name, fileMeta, aes));
   }
 
   /**
